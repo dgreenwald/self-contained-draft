@@ -48,6 +48,7 @@ expand_macros:
 external_aux:
   - RentalMarketsAppendix.aux
 figure_naming: document-order
+copy_support_files: false
 ```
 
 - Keep CLI flags for common overrides:
@@ -55,6 +56,7 @@ figure_naming: document-order
 ```bash
 self-contained-draft build paper.yml
 self-contained-draft build paper.yml --input Draft.tex --output-dir submission
+self-contained-draft build paper.yml --copy-support-files
 self-contained-draft inspect-figures paper.yml
 ```
 
@@ -102,7 +104,8 @@ self-contained-draft inspect-figures paper.yml
    - Create or reuse the configured output directory.
    - Write the cleaned flattened TeX file there.
    - Copy figure assets into the same directory by default.
-   - Do not collect bibliography, class, or style files in v1 unless explicitly added later.
+   - Do not collect bibliography, class, or style files by default.
+   - Add an opt-in `copy_support_files` setting and `--copy-support-files` CLI flag to copy local `.bib`, `.bst`, `.cls`, and `.sty` files into the output directory.
 
 8. Tests and validation:
    - Unit tests for brace parsing, comment stripping, macro expansion, input resolution, aux parsing, and figure rewriting.
@@ -113,7 +116,7 @@ self-contained-draft inspect-figures paper.yml
 ## Assumptions
 
 - v1 uses document-order figure naming, not compiled LaTeX counters.
-- v1 output includes the flattened TeX file plus copied/renamed figure assets, not a full compile-ready bundle with `.bib`, `.bst`, `.cls`, or `.sty` collection.
+- v1 output includes the flattened TeX file plus copied/renamed figure assets by default; local `.bib`, `.bst`, `.cls`, and `.sty` collection is opt-in.
 - Project-specific behavior belongs in a small YAML config, with CLI flags for overrides.
 - Macro expansion should be conservative: expand configured file/path/value macros, not every math/text macro in the preamble.
 - Missing inputs or figures should fail by default, with a future `--allow-missing` option if needed.
