@@ -117,6 +117,12 @@ def build_draft(config: BuildConfig) -> BuildResult:
         strip_comments=config.strip_comments,
         allow_missing_inputs=config.allow_missing_inputs,
     )
+    text = expand_configured_macros(
+        text,
+        macros,
+        config.expand_macros,
+        source=str(config.input),
+    )
 
     replaced_refs: tuple[str, ...] = ()
     unresolved_refs: tuple[str, ...] = ()

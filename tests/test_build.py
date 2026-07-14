@@ -60,6 +60,34 @@ def test_build_draft_writes_flattened_tex_and_copies_figures(tmp_path):
     assert result.replaced_refs == ("sec:appendix",)
 
 
+def test_build_draft_expands_root_macros_after_flattening(tmp_path):
+    root = tmp_path / "paper.tex"
+    section = tmp_path / "body.tex"
+    figure_dir = tmp_path / "figures"
+    output = tmp_path / "submission"
+    figure_dir.mkdir()
+    (figure_dir / "plot.pdf").write_bytes(b"pdf")
+    root.write_text(r"\def\figdir{figures}" "\n" r"\input{body}")
+    section.write_text(r"\includegraphics{\figdir/plot}")
+    config_file = tmp_path / "paper.yml"
+    config_file.write_text(
+        "\n".join(
+            [
+                "input: paper.tex",
+                "output_dir: submission",
+                "expand_macros:",
+                "  - figdir",
+            ]
+        )
+        + "\n"
+    )
+
+    build_draft(load_config(config_file))
+
+    assert (output / "paper.tex").read_text() == r"\def\figdir{figures}" "\n" r"\includegraphics{fig_1}"
+    assert (output / "fig_1.pdf").exists()
+
+
 def test_build_draft_does_not_copy_support_files_by_default(tmp_path):
     root = tmp_path / "paper.tex"
     bib = tmp_path / "master.bib"
