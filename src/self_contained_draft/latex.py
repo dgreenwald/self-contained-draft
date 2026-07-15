@@ -93,7 +93,8 @@ def strip_comments(text: str) -> str:
     """Remove LaTeX comments while preserving escaped percent signs.
 
     A percent sign starts a comment only when it is preceded by an even number
-    of backslashes. Newline characters are preserved.
+    of backslashes. The comment consumes the rest of the physical line,
+    including the newline, matching TeX's line-continuation behavior.
     """
 
     output: list[str] = []
@@ -104,7 +105,6 @@ def strip_comments(text: str) -> str:
             newline = text.find("\n", index)
             if newline == -1:
                 break
-            output.append("\n")
             index = newline + 1
             continue
         output.append(char)

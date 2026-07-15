@@ -62,6 +62,13 @@ def _build(args: argparse.Namespace) -> int:
     print(f"Copied {len(result.figure_assets)} figure asset(s)")
     if config.copy_support_files:
         print(f"Copied {len(result.support_files)} support file(s)")
+    if result.inlined_property_macros:
+        macros = ", ".join(f"\\{name}" for name in result.inlined_property_macros)
+        print(
+            "Inlined "
+            f"{result.inlined_property_replacements} property lookup(s) for {macros}; "
+            f"removed {result.removed_property_assignments} property assignment(s)"
+        )
     if result.unresolved_refs:
         print(f"Unresolved external ref(s): {', '.join(result.unresolved_refs)}")
     return 0

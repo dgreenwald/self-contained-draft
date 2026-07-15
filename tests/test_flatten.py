@@ -64,7 +64,20 @@ def test_flatten_file_strips_comments_before_scanning_inputs(tmp_path):
     hidden.write_text("hidden")
     root.write_text("% \\input{hidden}\n\\input{keep}")
 
-    assert flatten_file(root) == "\nvisible"
+    assert flatten_file(root) == "visible"
+
+
+def test_flatten_file_ignores_inputs_inside_macro_definitions(tmp_path):
+    root = tmp_path / "paper.tex"
+    body = tmp_path / "body.tex"
+    body.write_text("body")
+    root.write_text(
+        r"\newcommand{\readValue}[1]{\input{#1}}"
+        "\n"
+        r"\input{body}"
+    )
+
+    assert flatten_file(root) == r"\newcommand{\readValue}[1]{\input{#1}}" "\nbody"
 
 
 def test_flatten_file_can_preserve_missing_inputs(tmp_path):

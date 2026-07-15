@@ -9,9 +9,8 @@ from typing import Any
 import yaml
 
 from .figures import FigureAsset, rewrite_figures
-from .flatten import flatten_text
-from .latex import strip_comments
-from .macros import expand_configured_macros, parse_macros
+from .processor import process_file
+from .properties import PropertyInlineError, inline_property_macros
 from .refs import parse_aux_files, replace_external_refs
 from .support_files import SupportFile, copy_support_files
 
@@ -28,10 +27,12 @@ class BuildConfig:
     search_paths: tuple[Path, ...] = ()
     expand_macros: tuple[str, ...] = ()
     external_aux: tuple[Path, ...] = ()
+    figure_aux: Path | None = None
     strip_comments: bool = True
     allow_missing_inputs: bool = False
     allow_missing_figures: bool = False
     copy_support_files: bool = False
+    inline_property_macros: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -41,6 +42,9 @@ class BuildResult:
     support_files: tuple[SupportFile, ...]
     replaced_refs: tuple[str, ...]
     unresolved_refs: tuple[str, ...]
+    inlined_property_macros: tuple[str, ...] = ()
+    inlined_property_replacements: int = 0
+    removed_property_assignments: int = 0
 
 
 def load_config(
@@ -87,41 +91,30 @@ def load_config(
             _resolve_config_path(item, base_dir=base_dir)
             for item in _as_list(raw.get("external_aux", ()))
         ),
+        figure_aux=(
+            _resolve_config_path(raw["figure_aux"], base_dir=base_dir)
+            if raw.get("figure_aux") is not None
+            else None
+        ),
         strip_comments=bool(raw.get("strip_comments", True)),
         allow_missing_inputs=bool(raw.get("allow_missing_inputs", False)),
         allow_missing_figures=bool(raw.get("allow_missing_figures", False)),
         copy_support_files=copy_support,
+        inline_property_macros=tuple(
+            str(item) for item in _as_list(raw.get("inline_property_macros", ()))
+        ),
     )
 
 
 def build_draft(config: BuildConfig) -> BuildResult:
     """Run the configured self-contained draft build."""
 
-    try:
-        root_text = config.input.read_text()
-    except OSError as exc:
-        raise BuildError(f"Could not read input TeX file {config.input}: {exc}") from exc
-
-    macro_source = strip_comments(root_text) if config.strip_comments else root_text
-    macros = parse_macros(macro_source, source=str(config.input))
-    expanded_root = expand_configured_macros(
-        root_text,
-        macros,
-        config.expand_macros,
-        source=str(config.input),
-    )
-    text = flatten_text(
-        expanded_root,
-        source_path=config.input,
+    text = process_file(
+        config.input,
         search_paths=config.search_paths,
-        strip_comments=config.strip_comments,
+        strip_tex_comments=config.strip_comments,
         allow_missing_inputs=config.allow_missing_inputs,
-    )
-    text = expand_configured_macros(
-        text,
-        macros,
-        config.expand_macros,
-        source=str(config.input),
+        explicit_macros=config.expand_macros,
     )
 
     replaced_refs: tuple[str, ...] = ()
@@ -133,6 +126,14 @@ def build_draft(config: BuildConfig) -> BuildResult:
         replaced_refs = ref_result.replaced
         unresolved_refs = ref_result.unresolved
 
+    property_result = None
+    if config.inline_property_macros:
+        try:
+            property_result = inline_property_macros(text, config.inline_property_macros)
+        except PropertyInlineError as exc:
+            raise BuildError(str(exc)) from exc
+        text = property_result.text
+
     support_files: tuple[SupportFile, ...] = ()
     config.output_dir.mkdir(parents=True, exist_ok=True)
     if config.copy_support_files:
@@ -141,6 +142,7 @@ def build_draft(config: BuildConfig) -> BuildResult:
             source_dir=config.input.parent,
             output_dir=config.output_dir,
             search_paths=config.search_paths,
+            allow_missing=True,
         )
         text = support_result.text
         support_files = support_result.files
@@ -151,6 +153,7 @@ def build_draft(config: BuildConfig) -> BuildResult:
         output_dir=config.output_dir,
         search_paths=config.search_paths,
         allow_missing_figures=config.allow_missing_figures,
+        aux_file=config.figure_aux,
     )
     text = figure_result.text
 
@@ -162,6 +165,13 @@ def build_draft(config: BuildConfig) -> BuildResult:
         support_files=support_files,
         replaced_refs=replaced_refs,
         unresolved_refs=unresolved_refs,
+        inlined_property_macros=property_result.macros if property_result is not None else (),
+        inlined_property_replacements=(
+            property_result.replacements if property_result is not None else 0
+        ),
+        removed_property_assignments=(
+            property_result.removed_assignments if property_result is not None else 0
+        ),
     )
 
 

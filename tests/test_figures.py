@@ -133,6 +133,56 @@ def test_rewrite_figures_names_subfigures(tmp_path):
     assert (output / "fig_1b.pdf").exists()
 
 
+def test_rewrite_figures_can_use_aux_labels_for_output_names(tmp_path):
+    source = tmp_path / "paper"
+    output = tmp_path / "submission"
+    source.mkdir()
+    (source / "left.pdf").write_bytes(b"left")
+    (source / "right.pdf").write_bytes(b"right")
+    aux = source / "paper.aux"
+    aux.write_text(
+        r"\newlabel{fig:left}{{A.1a}{3}{Left}{figure.caption.1}{}}"
+        "\n"
+        r"\newlabel{fig:right}{{A.1b}{3}{Right}{figure.caption.1}{}}"
+    )
+    text = (
+        r"\begin{figure}"
+        r"\includegraphics{left}\label{fig:left}"
+        r"\includegraphics{right}\label{fig:right}"
+        r"\end{figure}"
+    )
+
+    result = rewrite_figures(text, source_dir=source, output_dir=output, aux_file=aux)
+
+    assert result.text == (
+        r"\begin{figure}"
+        r"\includegraphics{fig_A1a}\label{fig:left}"
+        r"\includegraphics{fig_A1b}\label{fig:right}"
+        r"\end{figure}"
+    )
+    assert (output / "fig_A1a.pdf").read_bytes() == b"left"
+    assert (output / "fig_A1b.pdf").read_bytes() == b"right"
+
+
+def test_rewrite_figures_falls_back_when_aux_label_is_missing(tmp_path):
+    source = tmp_path / "paper"
+    output = tmp_path / "submission"
+    source.mkdir()
+    (source / "plot.pdf").write_bytes(b"pdf")
+    aux = source / "paper.aux"
+    aux.write_text("")
+
+    result = rewrite_figures(
+        r"\begin{figure}\includegraphics{plot}\label{fig:plot}\end{figure}",
+        source_dir=source,
+        output_dir=output,
+        aux_file=aux,
+    )
+
+    assert result.text == r"\begin{figure}\includegraphics{fig_1}\label{fig:plot}\end{figure}"
+    assert (output / "fig_1.pdf").exists()
+
+
 def test_rewrite_figures_can_preserve_missing_figures(tmp_path):
     output = tmp_path / "submission"
 

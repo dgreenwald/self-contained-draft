@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 
 from .latex import LatexParseError, read_required_argument, strip_comments as strip_tex_comments
+from .macros import parse_macro_definitions
 
 
 class FlattenError(RuntimeError):
@@ -169,9 +170,15 @@ def _flatten_text(
     if options.strip_comments:
         text = strip_tex_comments(text)
 
+    definition_spans = tuple(
+        (definition.start, definition.end)
+        for definition in parse_macro_definitions(text, source=str(source_path))
+    )
     output: list[str] = []
     cursor = 0
     for match in INPUT_PATTERN.finditer(text):
+        if _inside_spans(match.start(), definition_spans):
+            continue
         command = parse_input_command(text, match.start(), source=str(source_path))
         output.append(text[cursor : command.start])
 
@@ -221,3 +228,7 @@ def _skip_whitespace(text: str, start: int) -> int:
     while index < len(text) and text[index].isspace():
         index += 1
     return index
+
+
+def _inside_spans(position: int, spans: tuple[tuple[int, int], ...]) -> bool:
+    return any(start <= position < end for start, end in spans)

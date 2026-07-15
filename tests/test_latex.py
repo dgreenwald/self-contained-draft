@@ -43,10 +43,10 @@ def test_bma_search_forwards_to_regex_search():
     assert result.after == "ccc"
 
 
-def test_strip_comments_preserves_escaped_percent_and_newlines():
+def test_strip_comments_preserves_escaped_percent_and_removes_comment_newlines():
     text = "a % remove this\nb \\% keep this\nc \\\\% remove this too\nd"
 
-    assert strip_comments(text) == "a \nb \\% keep this\nc \\\\\nd"
+    assert strip_comments(text) == "a b \\% keep this\nc \\\\d"
 
 
 def test_read_balanced_handles_nested_braces():

@@ -9,6 +9,7 @@ import re
 import shutil
 
 from .latex import LatexParseError, read_balanced, read_required_argument
+from .refs import parse_aux_file
 
 
 class FigureError(RuntimeError):
@@ -19,6 +20,7 @@ GRAPHICS_EXTENSIONS = (".pdf", ".png", ".jpg", ".jpeg", ".eps")
 INCLUDEGRAPHICS_PATTERN = re.compile(r"\\includegraphics\b")
 FIGURE_BEGIN_PATTERN = re.compile(r"\\begin\s*\{\s*figure\*?\s*\}")
 FIGURE_END_PATTERN = re.compile(r"\\end\s*\{\s*figure\*?\s*\}")
+LABEL_PATTERN = re.compile(r"\\label\s*\{([^{}]+)\}")
 
 
 @dataclass(frozen=True)
@@ -33,6 +35,7 @@ class IncludeGraphics:
     options: str | None
     figure_index: int | None
     panel_index: int | None
+    label: str | None
 
 
 @dataclass(frozen=True)
@@ -71,6 +74,7 @@ def rewrite_figures(
     copy_assets: bool = True,
     write_manifest: bool = True,
     allow_missing_figures: bool = False,
+    aux_file: str | Path | None = None,
 ) -> FigureRewriteResult:
     """Copy referenced figures to ``output_dir`` and rewrite graphics paths."""
 
@@ -78,7 +82,8 @@ def rewrite_figures(
     destination = Path(output_dir).expanduser().resolve()
     normalized_search_paths = _normalize_search_paths(search_paths, base_dir=source_root)
     includes = find_includegraphics(text)
-    output_names = assign_output_names(includes)
+    figure_numbers = parse_aux_file(aux_file) if aux_file is not None else None
+    output_names = assign_output_names(includes, figure_numbers=figure_numbers)
 
     destination.mkdir(parents=True, exist_ok=True)
     copied_by_source: dict[Path, FigureAsset] = {}
@@ -149,9 +154,14 @@ def find_includegraphics(text: str, *, source: str | None = None) -> tuple[Inclu
     figure_counter = 0
     span_to_index: dict[tuple[int, int], int] = {}
     includes: list[IncludeGraphics] = []
+    raw_spans = [
+        _containing_span(start, figure_spans)
+        for start, _, _, _, _, _ in raw_includes
+    ]
 
-    for start, end, options, path_start, path_end, path_text in raw_includes:
-        span = _containing_span(start, figure_spans)
+    for index, (start, end, options, path_start, path_end, path_text) in enumerate(raw_includes):
+        span = raw_spans[index]
+        next_start = _next_include_start_in_span(index, raw_includes, raw_spans)
         if span is None:
             figure_counter += 1
             figure_index = figure_counter
@@ -174,6 +184,7 @@ def find_includegraphics(text: str, *, source: str | None = None) -> tuple[Inclu
                 options=options,
                 figure_index=figure_index,
                 panel_index=panel_index,
+                label=_label_for_include(text, start=start, end=end, span=span, next_start=next_start),
             )
         )
 
@@ -201,16 +212,26 @@ def find_includegraphics(text: str, *, source: str | None = None) -> tuple[Inclu
                 options=include.options,
                 figure_index=include.figure_index,
                 panel_index=panel_index,
+                label=include.label,
             )
         )
     return tuple(normalized)
 
 
-def assign_output_names(includes: tuple[IncludeGraphics, ...]) -> dict[int, str]:
+def assign_output_names(
+    includes: tuple[IncludeGraphics, ...],
+    *,
+    figure_numbers: dict[str, str] | None = None,
+) -> dict[int, str]:
     """Assign document-order names such as ``fig_1`` and ``fig_2a``."""
 
     names: dict[int, str] = {}
     for include in includes:
+        if figure_numbers is not None and include.label is not None:
+            number = figure_numbers.get(include.label)
+            if number is not None:
+                names[include.start] = f"fig_{_sanitize_figure_number(number)}"
+                continue
         if include.figure_index is None:
             raise FigureError("Cannot assign a figure name without a figure index")
         suffix = ""
@@ -300,6 +321,52 @@ def _containing_span(position: int, spans: tuple[tuple[int, int], ...]) -> tuple
     return None
 
 
+def _next_include_start_in_span(
+    index: int,
+    raw_includes: list[tuple[int, int, str | None, int, int, str]],
+    raw_spans: list[tuple[int, int] | None],
+) -> int | None:
+    span = raw_spans[index]
+    for next_index in range(index + 1, len(raw_includes)):
+        if raw_spans[next_index] == span:
+            return raw_includes[next_index][0]
+        if span is None or raw_includes[next_index][0] > span[1]:
+            return None
+    return None
+
+
+def _label_for_include(
+    text: str,
+    *,
+    start: int,
+    end: int,
+    span: tuple[int, int] | None,
+    next_start: int | None,
+) -> str | None:
+    if span is None:
+        search_end = next_start if next_start is not None else len(text)
+        match = LABEL_PATTERN.search(text, end, search_end)
+        return match.group(1) if match is not None else None
+
+    search_end = next_start if next_start is not None else span[1]
+    labels_after_include = [
+        match.group(1)
+        for match in LABEL_PATTERN.finditer(text, end, search_end)
+    ]
+    if labels_after_include:
+        return labels_after_include[0]
+
+    includes_in_span = len(INCLUDEGRAPHICS_PATTERN.findall(text[span[0] : span[1]]))
+    if includes_in_span == 1:
+        labels_in_span = [
+            match.group(1)
+            for match in LABEL_PATTERN.finditer(text, span[0], span[1])
+        ]
+        if labels_in_span:
+            return labels_in_span[-1]
+    return None
+
+
 def _normalize_search_paths(
     search_paths: tuple[str | Path, ...],
     *,
@@ -329,6 +396,10 @@ def _panel_suffix(index: int) -> str:
         value, remainder = divmod(value - 1, 26)
         letters.append(chr(ord("a") + remainder))
     return "".join(reversed(letters))
+
+
+def _sanitize_figure_number(number: str) -> str:
+    return re.sub(r"[^A-Za-z0-9]+", "", number)
 
 
 def _skip_whitespace(text: str, start: int) -> int:

@@ -38,12 +38,20 @@ def parse_macros(text: str, *, source: str | None = None) -> dict[str, MacroDefi
     """Parse simple ``\\def`` and ``\\newcommand`` definitions from text."""
 
     definitions: dict[str, MacroDefinition] = {}
-    for definition in sorted(
-        (*_parse_defs(text, source=source), *_parse_newcommands(text, source=source)),
-        key=lambda item: item.start,
-    ):
+    for definition in parse_macro_definitions(text, source=source):
         definitions[definition.name] = definition
     return definitions
+
+
+def parse_macro_definitions(text: str, *, source: str | None = None) -> tuple[MacroDefinition, ...]:
+    """Parse all simple macro definitions from text in source order."""
+
+    return tuple(
+        sorted(
+            (*_parse_defs(text, source=source), *_parse_newcommands(text, source=source)),
+            key=lambda item: item.start,
+        )
+    )
 
 
 def expand_configured_macros(
@@ -61,19 +69,18 @@ def expand_configured_macros(
     can depend on other path macros without requiring broad document expansion.
     """
 
-    names = tuple(dict.fromkeys(_normalize_macro_name(name) for name in macro_names))
-    selected = {name: macros[name] for name in names if name in macros}
-    if not selected:
+    names = frozenset(_normalize_macro_name(name) for name in macro_names)
+    if not names:
         return text
 
     expanded = text
     for _ in range(max_passes):
-        current_macros = parse_macros(expanded, source=source)
-        definition_spans = tuple((macro.start, macro.end) for macro in current_macros.values())
+        current_definitions = parse_macro_definitions(expanded, source=source)
+        definition_spans = tuple((macro.start, macro.end) for macro in current_definitions)
         next_text, replacements = _expand_one_pass(
             expanded,
-            selected,
-            macros,
+            names,
+            current_definitions,
             definition_spans=definition_spans,
             source=source,
         )
@@ -87,10 +94,40 @@ def expand_configured_macros(
     )
 
 
+def remove_macro_definitions(
+    text: str,
+    macros: dict[str, MacroDefinition] | tuple[MacroDefinition, ...],
+    macro_names: list[str] | tuple[str, ...] | set[str],
+    *,
+    min_args: int = 0,
+) -> str:
+    """Remove definitions for configured macros from text."""
+
+    names = {_normalize_macro_name(name) for name in macro_names}
+    definitions = macros.values() if isinstance(macros, dict) else macros
+    spans = [
+        (macro.start, macro.end)
+        for macro in definitions
+        if macro.name in names and macro.nargs >= min_args
+    ]
+    if not spans:
+        return text
+
+    output: list[str] = []
+    cursor = 0
+    for start, end in sorted(spans):
+        output.append(text[cursor:start])
+        cursor = end
+    output.append(text[cursor:])
+    return "".join(output)
+
+
 def _parse_defs(text: str, *, source: str | None) -> list[MacroDefinition]:
     definitions: list[MacroDefinition] = []
     for match in DEF_PATTERN.finditer(text):
         content_start = _skip_whitespace(text, match.end())
+        if content_start >= len(text) or text[content_start] != "{":
+            continue
         content = read_balanced(text, start=content_start, left="{", source=source)
         definitions.append(
             MacroDefinition(
@@ -206,8 +243,8 @@ def _read_optional_nargs(
 
 def _expand_one_pass(
     text: str,
-    selected: dict[str, MacroDefinition],
-    macros: dict[str, MacroDefinition],
+    selected_names: frozenset[str],
+    definitions: tuple[MacroDefinition, ...],
     *,
     definition_spans: tuple[tuple[int, int], ...],
     source: str | None,
@@ -216,21 +253,29 @@ def _expand_one_pass(
     cursor = 0
     replacements = 0
 
-    for match in re.finditer(r"\\([A-Za-z@]+)\b", text):
+    for match in re.finditer(r"\\([A-Za-z@]+)(?![A-Za-z@])", text):
+        if match.start() < cursor:
+            continue
         name = match.group(1)
-        if name not in selected or _inside_spans(match.start(), definition_spans):
+        if name not in selected_names or _inside_spans(match.start(), definition_spans):
             continue
 
-        macro = selected[name]
+        macro = _active_definition(name, definitions, match.start())
+        if macro is None:
+            continue
+        try:
+            arguments, end = _read_macro_arguments(
+                text,
+                macro,
+                start=match.end(),
+                source=source,
+            )
+        except LatexParseError:
+            continue
         output.append(text[cursor : match.start()])
-        arguments, end = _read_macro_arguments(
-            text,
-            macro,
-            start=match.end(),
-            source=source,
-        )
+        active_macros = _active_definitions_by_name(definitions, match.start())
         replacement = substitute_arguments(
-            _resolve_zero_arg_dependencies(macro.content, macros, stack=(macro.name,)),
+            _resolve_zero_arg_dependencies(macro.content, active_macros, stack=(macro.name,)),
             arguments,
         )
         output.append(replacement)
@@ -241,6 +286,32 @@ def _expand_one_pass(
         return text, 0
     output.append(text[cursor:])
     return "".join(output), replacements
+
+
+def _active_definition(
+    name: str,
+    definitions: tuple[MacroDefinition, ...],
+    position: int,
+) -> MacroDefinition | None:
+    active: MacroDefinition | None = None
+    for definition in definitions:
+        if definition.start >= position:
+            break
+        if definition.name == name:
+            active = definition
+    return active
+
+
+def _active_definitions_by_name(
+    definitions: tuple[MacroDefinition, ...],
+    position: int,
+) -> dict[str, MacroDefinition]:
+    active: dict[str, MacroDefinition] = {}
+    for definition in definitions:
+        if definition.start >= position:
+            break
+        active[definition.name] = definition
+    return active
 
 
 def _read_macro_arguments(
@@ -270,7 +341,7 @@ def _resolve_zero_arg_dependencies(
 ) -> str:
     output: list[str] = []
     cursor = 0
-    for match in re.finditer(r"\\([A-Za-z@]+)\b", content):
+    for match in re.finditer(r"\\([A-Za-z@]+)(?![A-Za-z@])", content):
         name = match.group(1)
         dependency = macros.get(name)
         if dependency is None or dependency.nargs != 0:
