@@ -52,6 +52,20 @@ def test_inline_property_macros_replaces_lookup_inside_latex_expression():
     )
 
 
+def test_inline_property_macros_preserves_spaces_after_values_ending_in_control_words():
+    text = (
+        r"\cs_new:Npn \param #1 { \prop_item:Nn \g_equilibrium_param_prop {#1} }"
+        "\n"
+        r"\prop_gput:Nnn \g_equilibrium_param_prop {shock} {0.1980\unskip}"
+        "\n"
+        r"\param{shock} so"
+    )
+
+    result = inline_property_macros(text, ("param",))
+
+    assert "0.1980\\unskip{} so" in result.text
+
+
 def test_inline_property_macros_only_touches_configured_macros():
     text = (
         r"\cs_new:Npn \steady #1 { \prop_item:Nn \g_equilibrium_steady_prop {#1} }"

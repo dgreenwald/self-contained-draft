@@ -7,6 +7,7 @@ import re
 
 from .latex import (
     LatexParseError,
+    protect_trailing_control_word,
     read_balanced,
     read_required_argument,
     substitute_arguments,
@@ -278,7 +279,7 @@ def _expand_one_pass(
             _resolve_zero_arg_dependencies(macro.content, active_macros, stack=(macro.name,)),
             arguments,
         )
-        output.append(replacement)
+        output.append(protect_trailing_control_word(replacement))
         cursor = end
         replacements += 1
 

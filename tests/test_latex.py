@@ -49,6 +49,12 @@ def test_strip_comments_preserves_escaped_percent_and_removes_comment_newlines()
     assert strip_comments(text) == "a b \\% keep this\nc \\\\d"
 
 
+def test_strip_comments_removes_indentation_after_line_continuation():
+    text = "\\newcommand{\\topct}[1]{%\n\t\\topctPlaces{#1}{1}%\n}"
+
+    assert strip_comments(text) == "\\newcommand{\\topct}[1]{\\topctPlaces{#1}{1}}"
+
+
 def test_read_balanced_handles_nested_braces():
     result = read_balanced("{a {nested} value} tail")
 

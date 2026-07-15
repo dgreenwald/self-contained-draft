@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import re
 
-from .latex import LatexParseError, read_required_argument
+from .latex import LatexParseError, protect_trailing_control_word, read_required_argument
 
 
 class PropertyInlineError(RuntimeError):
@@ -173,7 +173,9 @@ def _find_call_replacements(
             raise PropertyInlineError(
                 f"Could not inline \\{macro}{{{key}}}: key not found in {prop}"
             )
-        modifications.append(_Modification(match.start(), argument.end, values[key]))
+        modifications.append(
+            _Modification(match.start(), argument.end, protect_trailing_control_word(values[key]))
+        )
         count += 1
         cursor = argument.end
 

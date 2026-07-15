@@ -106,6 +106,8 @@ def strip_comments(text: str) -> str:
             if newline == -1:
                 break
             index = newline + 1
+            while index < len(text) and text[index] in " \t":
+                index += 1
             continue
         output.append(char)
         index += 1
@@ -247,6 +249,20 @@ def substitute_arguments(template: str, arguments: Iterable[str]) -> str:
     for index, argument in enumerate(arguments, start=1):
         result = result.replace(f"#{index}", argument)
     return result
+
+
+def protect_trailing_control_word(text: str) -> str:
+    """Preserve following source spaces after literalized macro expansion.
+
+    TeX skips spaces after a control word while tokenizing source. When a macro
+    expansion ending in a control word is written back as literal text, appending
+    an empty group recreates the token boundary that existed in the original
+    macro expansion.
+    """
+
+    if re.search(r"\\[A-Za-z@]+$", text):
+        return text + "{}"
+    return text
 
 
 def _skip_whitespace(text: str, start: int) -> int:

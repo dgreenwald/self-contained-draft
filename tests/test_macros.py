@@ -172,8 +172,17 @@ def test_expand_configured_macro_can_use_argument_and_dependency():
     macros = parse_macros(text)
 
     assert expand_configured_macros(text, macros, ["readDetResult"]).endswith(
-        r"\input{../plots/data/value}\unskip"
+        r"\input{../plots/data/value}\unskip{}"
     )
+
+
+def test_expand_preserves_space_after_replacement_ending_in_control_word():
+    text = r"\newcommand{\value}{0.1980\unskip}" "\n" r"\value so"
+    macros = parse_macros(text)
+
+    expanded = expand_configured_macros(text, macros, ["value"])
+
+    assert expanded == r"\newcommand{\value}{0.1980\unskip}" "\n" r"0.1980\unskip{} so"
 
 
 def test_unconfigured_macro_is_preserved():

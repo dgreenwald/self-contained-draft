@@ -7,7 +7,13 @@ from pathlib import Path
 import re
 
 from .flatten import FlattenError, resolve_input_path
-from .latex import LatexParseError, read_balanced, read_required_argument, strip_comments
+from .latex import (
+    LatexParseError,
+    protect_trailing_control_word,
+    read_balanced,
+    read_required_argument,
+    strip_comments,
+)
 from .macros import MacroDefinition, substitute_arguments
 
 
@@ -396,7 +402,7 @@ def _expand_macro_call(
     expanded_args = [expand_path_text(argument, env) for argument in arguments]
     replacement = substitute_arguments(macro.content, expanded_args)
     replacement = expand_path_text(replacement, env)
-    return replacement, cursor
+    return protect_trailing_control_word(replacement), cursor
 
 
 def _expand_zero_arg_macros(
