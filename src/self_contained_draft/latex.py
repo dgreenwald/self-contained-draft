@@ -272,6 +272,79 @@ def read_required_argument(
     return read_balanced(text, start=start, left="{", source=source)
 
 
+def read_optional_argument(
+    text: str, *, start: int = 0, source: str | None = None,
+) -> DelimitedMatch | None:
+    """Read an optional argument; braced or escaped closing brackets are literal."""
+
+    start = _skip_whitespace(text, start)
+    if text[start:start + 1] != "[":
+        return None
+    cursor = start + 1
+    depth = 0
+    while cursor < len(text):
+        char = text[cursor]
+        if char == "\\":
+            cursor += 2
+            continue
+        if char == "%":
+            newline = text.find("\n", cursor)
+            cursor = len(text) if newline < 0 else newline + 1
+            continue
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            if depth == 0:
+                raise LatexParseError("Unexpected '}' in optional argument", source=source, position=cursor, text=text)
+            depth -= 1
+        elif char == "]" and depth == 0:
+            return DelimitedMatch(text[start + 1:cursor], "]", text[cursor + 1:], start, cursor + 1)
+        cursor += 1
+    raise LatexParseError("Unclosed optional argument", source=source, position=start, text=text)
+
+
+def read_macro_parameters(
+    text: str, *, start: int, source: str | None = None,
+) -> tuple[int, str | None, int]:
+    """Read newcommand's optional argument count and optional first-argument default."""
+
+    count = read_optional_argument(text, start=start, source=source)
+    if count is None:
+        return 0, None, start
+    try:
+        nargs = int(count.content.strip() or "0")
+    except ValueError as exc:
+        raise LatexParseError("Expected integer argument count", source=source, position=count.start, text=text) from exc
+    if not 0 <= nargs <= 9:
+        raise LatexParseError("Only macros with 0 to 9 arguments are supported", source=source, position=count.start, text=text)
+    default = read_optional_argument(text, start=count.end, source=source)
+    if default is None:
+        return nargs, None, count.end
+    if nargs == 0:
+        raise LatexParseError("An optional default requires at least one argument", source=source, position=default.start, text=text)
+    return nargs, default.content, default.end
+
+
+def read_macro_arguments(
+    text: str, *, start: int, nargs: int, optional_default: str | None = None,
+    source: str | None = None,
+) -> tuple[list[str], int]:
+    """Read a macro call's optional first argument and braced required arguments."""
+
+    arguments: list[str] = []
+    cursor = start
+    if optional_default is not None:
+        optional = read_optional_argument(text, start=cursor, source=source)
+        arguments.append(optional_default if optional is None else optional.content)
+        if optional is not None:
+            cursor = optional.end
+    for _ in range(nargs - len(arguments)):
+        argument = read_required_argument(text, start=cursor, source=source)
+        arguments.append(argument.content)
+        cursor = argument.end
+    return arguments, cursor
+
+
 def read_required_arguments(
     text: str,
     count: int,

@@ -248,9 +248,25 @@ avoid overwriting one another.
 The build uses a lightweight parser. Use braced `\input{...}` commands;
 `\include` is not flattened. Supported macro definitions include zero-argument
 `\def` and `\newcommand`/`\renewcommand` (including starred forms) with required
-arguments. Optional macro argument defaults and general TeX execution or scoping
-are not implemented. Ordinary content macros stay intact unless explicitly
+arguments and an optional first argument using `[nargs][default]`. Omitted
+options use the default; explicit `[]` supplies an empty first argument. Closing
+brackets inside braces or escaped as `\]` do not end an option. General TeX
+execution or scoping is not implemented. Ordinary content macros stay intact unless explicitly
 selected for expansion.
+
+For example, with `expand_macros: [plotExtremaNum]`, this definition:
+
+```tex
+\newcommand{\plotExtremaNum}[2][]{%
+\num[round-mode=places,round-precision=2,#1]{\plotExtremaExpanded{#2}}%
+}
+```
+
+expands `\plotExtremaNum[round-precision=4]{key}` to
+`\num[round-mode=places,round-precision=2,round-precision=4]{\plotExtremaExpanded{key}}`.
+Omitting the option substitutes an empty `#1`, retaining the template's trailing
+comma. Numeric formatting stays in LaTeX; inner commands need their own expansion
+configuration if they should also be replaced.
 
 ## CLI Options
 

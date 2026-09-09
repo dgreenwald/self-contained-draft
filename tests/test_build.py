@@ -631,3 +631,46 @@ def test_build_draft_skips_missing_support_files_when_copying(tmp_path):
     assert (output / "refs.bib").exists()
     assert not (output / "missing-local-class.cls").exists()
     assert [file.output_name for file in result.support_files] == ["refs.bib"]
+
+
+def test_build_expands_optional_rounding_helper(tmp_path):
+    (tmp_path / 'paper.tex').write_text(
+        r'\newcommand{\plotExtremaNum}[2][]{%' '\n'
+        r'\num[round-mode=places,round-precision=2,#1]{\plotExtremaExpanded{#2}}%' '\n'
+        '}\n'
+        r'\plotExtremaNum{first}' '\n'
+        r'\plotExtremaNum[round-precision=4]{second}' '\n'
+        r'\plotExtremaNum[]{third}'
+    )
+    config = tmp_path / 'paper.yml'
+    config.write_text('input: paper.tex\nexpand_macros: [plotExtremaNum]\n')
+    build_draft(load_config(config))
+    assert (tmp_path / 'submission/paper.tex').read_text() == (
+        '\n' r'\num[round-mode=places,round-precision=2,]{\plotExtremaExpanded{first}}' '\n'
+        r'\num[round-mode=places,round-precision=2,round-precision=4]{\plotExtremaExpanded{second}}' '\n'
+        r'\num[round-mode=places,round-precision=2,]{\plotExtremaExpanded{third}}'
+    )
+
+
+def test_build_preserves_unconfigured_optional_macro(tmp_path):
+    text = r'\newcommand{\foo}[2][default]{#1/#2}' '\n' r'\foo[option]{value}'
+    (tmp_path / 'paper.tex').write_text(text)
+    config = tmp_path / 'paper.yml'
+    config.write_text('input: paper.tex\n')
+    build_draft(load_config(config))
+    assert (tmp_path / 'submission/paper.tex').read_text() == text
+
+
+def test_build_optional_defaults_and_redefinition(tmp_path):
+    (tmp_path / 'paper.tex').write_text(
+        r'\newcommand*{\foo}[2][{a]b}]{#1/#2}' '\n'
+        r'\foo{x};\foo[]{y};' '\n'
+        r'\renewcommand*{\foo}[1][fallback]{#1\unskip}' '\n'
+        r'\foo[override] next;\foo;'
+    )
+    config = tmp_path / 'paper.yml'
+    config.write_text('input: paper.tex\nexpand_macros: [foo]\n')
+    build_draft(load_config(config))
+    assert (tmp_path / 'submission/paper.tex').read_text() == (
+        '\n{a]b}/x;/y;\n\n' r'override\unskip{} next;fallback\unskip{};'
+    )

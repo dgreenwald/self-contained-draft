@@ -16,6 +16,8 @@ from .latex import (
     protect_trailing_control_word,
     read_balanced,
     read_required_argument,
+    read_macro_arguments,
+    read_macro_parameters,
     strip_comments,
 )
 from .macros import MacroDefinition, substitute_arguments
@@ -455,14 +457,12 @@ def _parse_newcommand(text: str, start: int, *, source: str) -> MacroDefinition:
     else:
         raise LatexParseError("Expected macro name", source=source, position=cursor, text=text)
 
-    cursor = _skip_whitespace(text, cursor)
-    nargs = 0
-    if cursor < len(text) and text[cursor] == "[":
-        nargs_arg = read_balanced(text, start=cursor, left="[", source=source)
-        nargs = int(nargs_arg.content.strip() or "0")
-        cursor = _skip_whitespace(text, nargs_arg.end)
-    content = read_balanced(text, start=cursor, left="{", source=source)
-    return MacroDefinition(name=name, nargs=nargs, content=content.content, start=start, end=content.end, kind="newcommand")
+    nargs, optional_default, cursor = read_macro_parameters(text, start=cursor, source=source)
+    content = read_required_argument(text, start=cursor, source=source)
+    return MacroDefinition(
+        name=name, nargs=nargs, content=content.content, start=start,
+        end=content.end, kind="newcommand", optional_default=optional_default,
+    )
 
 
 def _expand_macro_call(
@@ -474,13 +474,11 @@ def _expand_macro_call(
     source: str,
     conditionals: ConditionalSimplifier | None = None,
 ) -> tuple[str | None, int]:
-    arguments: list[str] = []
-    cursor = start
     try:
-        for _ in range(macro.nargs):
-            argument = read_required_argument(text, start=cursor, source=source)
-            arguments.append(argument.content)
-            cursor = argument.end
+        arguments, cursor = read_macro_arguments(
+            text, start=start, nargs=macro.nargs,
+            optional_default=macro.optional_default, source=source,
+        )
     except LatexParseError:
         return None, start
     expanded_args = [

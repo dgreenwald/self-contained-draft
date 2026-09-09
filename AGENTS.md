@@ -66,6 +66,10 @@ across many directories.
 ## LaTeX Parsing Rules
 - Keep parsing conservative. This is not a complete TeX parser.
 - Use balanced-brace helpers from `latex.py` for command arguments.
+- `\newcommand`/`\renewcommand` expansion supports `[nargs][default]`, including
+  starred forms. The optional first argument counts toward `nargs`; omitted
+  options use the default and explicit `[]` supplies an empty value. Keep both
+  expansion paths on the shared parameter/argument readers in `latex.py`.
 - Preserve TeX token behavior when literalizing macro expansions:
   - A replacement ending in a control word such as `\unskip` needs a token
     separator like `{}` before following source spaces.

@@ -109,3 +109,14 @@ def test_comment_stripping_preserves_control_word_boundary():
     assert strip_comments("\\ifFlag% comment\n  yes") == r"\ifFlag yes"
     assert strip_comments("\\unskip% comment\n  text") == r"\unskip text"
     assert strip_comments("\\\\word% comment\n  text") == r"\\wordtext"
+
+
+def test_optional_argument_brackets_follow_tex_grouping():
+    from self_contained_draft.latex import read_optional_argument
+
+    match = read_optional_argument('[a[b]tail')
+    assert match.content == 'a[b'
+    assert match.after == 'tail'
+    match = read_optional_argument('[{a]b}\\]c% ignored ]\nend]tail')
+    assert match.content == '{a]b}\\]c% ignored ]\nend'
+    assert match.after == 'tail'

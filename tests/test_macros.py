@@ -233,3 +233,40 @@ def test_expanded_path_macro_can_be_flattened(tmp_path):
     expanded = expand_configured_macros(text, macros, ["sectiondir"])
 
     assert flatten_text(expanded, source_path=source) == r"\def\sectiondir{sections}" "\nbody"
+
+
+@pytest.mark.parametrize(
+    ('call', 'expected'),
+    [(r'\foo{x}', 'default/x'), (r'\foo[override]{x}', 'override/x'),
+     (r'\foo[]{x}', '/x'), (r'\foo[{a]b}]{x}', '{a]b}/x'),
+     (r'\foo[a\]b]{x}', r'a\]b/x')],
+)
+def test_expand_optional_first_argument(call, expected):
+    definition = r'\newcommand{\foo}[2][default]{#1/#2}'
+    text = definition + '\n' + call
+    macro = parse_macros(text)['foo']
+    assert macro.nargs == 2
+    assert macro.optional_default == 'default'
+    assert expand_configured_macros(text, parse_macros(text), ['foo']) == definition + '\n' + expected
+
+
+def test_optional_only_macro_and_redefinition():
+    text = (r'\newcommand*{\foo}[1][a]{(#1)}' '\n'
+            r'\foo;\foo[];\foo[b];' '\n'
+            r'\renewcommand*{\foo}[1][c]{[#1]}' '\n' r'\foo;')
+    expanded = expand_configured_macros(text, parse_macros(text), ['foo'])
+    assert '\n(a);();(b);\n' in expanded
+    assert expanded.endswith('\n[c];')
+
+
+def test_optional_call_missing_required_argument_is_preserved():
+    text = r'\newcommand{\foo}[2][]{#1/#2} \foo[option]'
+    assert expand_configured_macros(text, parse_macros(text), ['foo']) == text
+
+
+@pytest.mark.parametrize('parameters', ['[0][]', '[1][unfinished', '[ten]', '[10]', '[1][}]'])
+def test_invalid_optional_definition(parameters):
+    from self_contained_draft.latex import LatexParseError
+
+    with pytest.raises(LatexParseError):
+        parse_macros(r'\newcommand{\foo}' + parameters + '{body}')

@@ -10,6 +10,8 @@ from .latex import (
     protect_trailing_control_word,
     read_balanced,
     read_required_argument,
+    read_macro_arguments,
+    read_macro_parameters,
     substitute_arguments,
 )
 
@@ -28,6 +30,7 @@ class MacroDefinition:
     start: int
     end: int
     kind: str
+    optional_default: str | None = None
 
 
 NEWCOMMAND_PATTERN = re.compile(r"\\(?:re)?newcommand\*?(?![A-Za-z@])")
@@ -147,7 +150,7 @@ def _parse_newcommands(text: str, *, source: str | None) -> list[MacroDefinition
     definitions: list[MacroDefinition] = []
     for match in NEWCOMMAND_PATTERN.finditer(text):
         name, cursor = _read_newcommand_name(text, match.end(), source=source)
-        nargs, cursor = _read_optional_nargs(text, cursor, source=source)
+        nargs, optional_default, cursor = read_macro_parameters(text, start=cursor, source=source)
         content_start = _skip_whitespace(text, cursor)
         content = read_balanced(text, start=content_start, left="{", source=source)
         definitions.append(
@@ -158,6 +161,7 @@ def _parse_newcommands(text: str, *, source: str | None) -> list[MacroDefinition
                 start=match.start(),
                 end=content.end,
                 kind="newcommand",
+                optional_default=optional_default,
             )
         )
     return definitions
@@ -207,39 +211,6 @@ def _read_newcommand_name(
             text=text,
         )
     return name_match.group(0), name_match.end()
-
-
-def _read_optional_nargs(
-    text: str,
-    start: int,
-    *,
-    source: str | None,
-) -> tuple[int, int]:
-    cursor = _skip_whitespace(text, start)
-    if cursor >= len(text) or text[cursor] != "[":
-        return 0, cursor
-
-    nargs_arg = read_balanced(text, start=cursor, left="[", source=source)
-    raw_nargs = nargs_arg.content.strip()
-    if raw_nargs == "":
-        return 0, nargs_arg.end
-    try:
-        nargs = int(raw_nargs)
-    except ValueError as exc:
-        raise LatexParseError(
-            "Expected integer argument count in \\newcommand",
-            source=source,
-            position=cursor,
-            text=text,
-        ) from exc
-    if nargs < 0 or nargs > 9:
-        raise LatexParseError(
-            "Only macros with 0 to 9 arguments are supported",
-            source=source,
-            position=cursor,
-            text=text,
-        )
-    return nargs, nargs_arg.end
 
 
 def _expand_one_pass(
@@ -322,16 +293,10 @@ def _read_macro_arguments(
     start: int,
     source: str | None,
 ) -> tuple[list[str], int]:
-    if macro.nargs == 0:
-        return [], start
-
-    arguments: list[str] = []
-    cursor = start
-    for _ in range(macro.nargs):
-        argument = read_required_argument(text, start=cursor, source=source)
-        arguments.append(argument.content)
-        cursor = argument.end
-    return arguments, cursor
+    return read_macro_arguments(
+        text, start=start, nargs=macro.nargs,
+        optional_default=macro.optional_default, source=source,
+    )
 
 
 def _resolve_zero_arg_dependencies(
