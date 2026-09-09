@@ -103,3 +103,9 @@ def test_expand_to_target_can_find_custom_target_at_depth():
 
 def test_substitute_arguments_replaces_latex_placeholders():
     assert substitute_arguments(r"\input{#1/#2}", ["dir", "file"]) == r"\input{dir/file}"
+
+
+def test_comment_stripping_preserves_control_word_boundary():
+    assert strip_comments("\\ifFlag% comment\n  yes") == r"\ifFlag yes"
+    assert strip_comments("\\unskip% comment\n  text") == r"\unskip text"
+    assert strip_comments("\\\\word% comment\n  text") == r"\\wordtext"

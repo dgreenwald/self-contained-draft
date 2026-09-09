@@ -56,6 +56,96 @@ class DelimitedMatch:
     end: int
 
 
+@dataclass(frozen=True)
+class ControlSequence:
+    name: str
+    start: int
+    end: int
+
+
+_CONTROL_SEQUENCE_PATTERN = re.compile(r"[A-Za-z@]+|[\s\S]")
+
+
+def iter_control_sequences(text: str, *, start: int = 0) -> Iterable[ControlSequence]:
+    """Scan control words/symbols, ignoring comments and escaped backslashes."""
+
+    cursor = start
+    while cursor < len(text):
+        if text[cursor] == "%":
+            newline = text.find("\n", cursor)
+            cursor = len(text) if newline < 0 else newline + 1
+        elif text[cursor] == "\\":
+            match = _CONTROL_SEQUENCE_PATTERN.match(text, cursor + 1)
+            if match is None:
+                return
+            end = match.end()
+            yield ControlSequence(match.group(), cursor, end)
+            cursor = end
+        else:
+            cursor += 1
+
+
+def control_word_suffix(text: str, start: int) -> tuple[str, int]:
+    """Consume ignored space after a control word, retaining comments/blank lines.
+
+    One physical endline acts as ignored delimiter space. A subsequent blank
+    line must remain, since it produces a paragraph token. Comment endlines do
+    not count toward this limit.
+    """
+
+    cursor = start
+    saw_endline = False
+    comments: list[str] = []
+    while cursor < len(text):
+        char = text[cursor]
+        if char in " \t":
+            cursor += 1
+        elif char == "\n" and not saw_endline:
+            saw_endline = True
+            cursor += 1
+        elif char == "%":
+            newline = text.find("\n", cursor)
+            end = len(text) if newline < 0 else newline + 1
+            comments.append(text[cursor:end])
+            cursor = end
+        else:
+            break
+    # Keep both endlines when the next one represents a blank line; otherwise
+    # literalizing the fragment would turn a paragraph into an ordinary space.
+    if saw_endline and cursor < len(text) and text[cursor] == "\n":
+        comments.append("\n")
+    return "".join(comments), cursor
+
+
+def skip_tex_tokens(text: str, start: int, count: int) -> int:
+    """Skip literal token operands (no expansion), such as those of ``\\ifx``."""
+
+    cursor = start
+    for _ in range(count):
+        while cursor < len(text):
+            if text[cursor].isspace():
+                cursor += 1
+            elif text[cursor] == "%":
+                newline = text.find("\n", cursor)
+                cursor = len(text) if newline < 0 else newline + 1
+            else:
+                break
+        if cursor == len(text):
+            return cursor
+        if text[cursor] == "\\":
+            match = _CONTROL_SEQUENCE_PATTERN.match(text, cursor + 1)
+            cursor = match.end() if match is not None else len(text)
+        else:
+            cursor += 1
+    return cursor
+
+
+def join_tex_fragments(left: str, right: str) -> str:
+    """Join fragments without merging an exposed control word with new tokens."""
+
+    return protect_trailing_control_word(left, following=right) + right
+
+
 BRACKET_PAIRS = {
     "(": ")",
     "[": "]",
@@ -108,6 +198,11 @@ def strip_comments(text: str) -> str:
             index = newline + 1
             while index < len(text) and text[index] in " \t":
                 index += 1
+            if (index < len(text) and re.match(r"[A-Za-z@]", text[index])
+                    and _ends_in_control_word("".join(output))):
+                # A comment also terminates a control word. Preserve that token
+                # boundary when removing its newline and following indentation.
+                output.append(" ")
             continue
         output.append(char)
         index += 1
@@ -251,7 +346,7 @@ def substitute_arguments(template: str, arguments: Iterable[str]) -> str:
     return result
 
 
-def protect_trailing_control_word(text: str) -> str:
+def protect_trailing_control_word(text: str, *, following: str | None = None) -> str:
     """Preserve following source spaces after literalized macro expansion.
 
     TeX skips spaces after a control word while tokenizing source. When a macro
@@ -260,9 +355,16 @@ def protect_trailing_control_word(text: str) -> str:
     macro expansion.
     """
 
-    if re.search(r"\\[A-Za-z@]+$", text):
+    if following is not None and (not following or re.match(r"[A-Za-z@\s]", following) is None):
+        return text
+    if _ends_in_control_word(text):
         return text + "{}"
     return text
+
+
+def _ends_in_control_word(text: str) -> bool:
+    match = re.search(r"(\\+)[A-Za-z@]+$", text)
+    return match is not None and len(match.group(1)) % 2 == 1
 
 
 def _skip_whitespace(text: str, start: int) -> int:

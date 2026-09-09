@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, replace
 from pathlib import Path
 import re
 
+from .conditionals import ConditionalSimplifier, validate_flags
 from .flatten import FlattenError, resolve_input_path
 from .latex import (
     LatexParseError,
+    iter_control_sequences,
+    join_tex_fragments,
     protect_trailing_control_word,
     read_balanced,
     read_required_argument,
@@ -27,6 +31,7 @@ class ProcessOptions:
     strip_comments: bool = True
     allow_missing_inputs: bool = False
     explicit_macros: frozenset[str] = frozenset()
+    conditionals: ConditionalSimplifier | None = None
 
 
 COMMAND_PATTERN = re.compile(
@@ -62,6 +67,7 @@ def process_file(
     strip_tex_comments: bool = True,
     allow_missing_inputs: bool = False,
     explicit_macros: tuple[str, ...] = (),
+    conditional_flags: Mapping[str, bool] | None = None,
 ) -> str:
     """Flatten a root file while resolving macros only in path contexts."""
 
@@ -71,6 +77,7 @@ def process_file(
         strip_comments=strip_tex_comments,
         allow_missing_inputs=allow_missing_inputs,
         explicit_macros=frozenset(_normalize_name(name) for name in explicit_macros),
+        conditionals=_conditional_options(conditional_flags),
     )
     return _process_file(root, env={}, options=options, stack=())
 
@@ -83,6 +90,7 @@ def process_text(
     strip_tex_comments: bool = True,
     allow_missing_inputs: bool = False,
     explicit_macros: tuple[str, ...] = (),
+    conditional_flags: Mapping[str, bool] | None = None,
 ) -> str:
     """Process already-loaded text with a source path for relative resolution."""
 
@@ -92,6 +100,7 @@ def process_text(
         strip_comments=strip_tex_comments,
         allow_missing_inputs=allow_missing_inputs,
         explicit_macros=frozenset(_normalize_name(name) for name in explicit_macros),
+        conditionals=_conditional_options(conditional_flags),
     )
     return _process_text(text, source_path=source, env={}, options=options, stack=(source,))
 
@@ -100,6 +109,11 @@ def expand_path_text(text: str, env: dict[str, MacroDefinition]) -> str:
     """Expand zero-argument macros in a path-like string."""
 
     return _expand_zero_arg_macros(text, env, stack=())
+
+
+def _conditional_options(flags: Mapping[str, bool] | None) -> ConditionalSimplifier | None:
+    validated = validate_flags({} if flags is None else flags)
+    return ConditionalSimplifier(validated) if validated else None
 
 
 def _process_file(
@@ -139,8 +153,19 @@ def _process_text(
 
     output: list[str] = []
     cursor = 0
+    tokens = iter(iter_control_sequences(text)) if options.conditionals is not None else None
     while cursor < len(text):
-        match = COMMAND_PATTERN.search(text, cursor)
+        if tokens is not None:
+            token = next(tokens, None)
+            while token is not None and token.start < cursor:
+                token = next(tokens, None)
+            match = COMMAND_PATTERN.match(text, token.start) if token is not None else None
+            if token is not None and match is None:
+                output.append(text[cursor:token.end])
+                cursor = token.end
+                continue
+        else:
+            match = COMMAND_PATTERN.search(text, cursor)
         if match is None:
             output.append(text[cursor:])
             break
@@ -149,27 +174,53 @@ def _process_text(
         name = command.removeprefix("\\")
         output.append(text[cursor : match.start()])
 
+        if options.conditionals is not None:
+            if name == "newif":
+                end = options.conditionals.declaration_end(text, token)
+                output.append(text[match.start():end])
+                cursor = end
+                continue
+            if options.conditionals.configured(name):
+                branch, end = options.conditionals.select(text, token, source=str(source_path))
+                replacement = _process_text(
+                    branch, source_path=source_path, env=env, options=options, stack=stack,
+                )
+                # The deleted delimiters used to separate adjacent TeX tokens.
+                combined = join_tex_fragments("".join(output), replacement)
+                output = [protect_trailing_control_word(combined, following=text[end:])]
+                cursor = end
+                continue
+            operand_end = options.conditionals.operand_end(text, token, source=str(source_path))
+            if operand_end > token.end:
+                output.append(text[match.start():operand_end])
+                cursor = operand_end
+                continue
+
         if name == "def":
             definition = _parse_def(text, match.start(), source=str(source_path))
             if definition is None:
                 output.append(command)
                 cursor = match.end()
                 continue
+            original_content = definition.content
+            definition = _simplify_definition(definition, options, source_path)
             env[definition.name] = definition
             if _should_remove_definition(definition, options, env):
                 cursor = definition.end
             else:
-                output.append(text[match.start() : definition.end])
+                output.append(_definition_text(text, match.start(), definition, original_content))
                 cursor = definition.end
             continue
 
         if name in {"newcommand", "renewcommand", "newcommand*", "renewcommand*"}:
             definition = _parse_newcommand(text, match.start(), source=str(source_path))
+            original_content = definition.content
+            definition = _simplify_definition(definition, options, source_path)
             env[definition.name] = definition
             if _should_remove_definition(definition, options, env):
                 cursor = definition.end
             else:
-                output.append(text[match.start() : definition.end])
+                output.append(_definition_text(text, match.start(), definition, original_content))
                 cursor = definition.end
             continue
 
@@ -207,6 +258,7 @@ def _process_text(
                 env=env,
                 source=str(source_path),
                 allow_optional=True,
+                conditionals=options.conditionals,
             )
             output.append(replacement)
             cursor = end
@@ -220,6 +272,7 @@ def _process_text(
                 env=env,
                 source=str(source_path),
                 allow_optional=name in {"documentclass", "usepackage"},
+                conditionals=options.conditionals,
             )
             output.append(replacement)
             cursor = end
@@ -233,6 +286,7 @@ def _process_text(
                 match.end(),
                 env=env,
                 source=str(source_path),
+                conditionals=options.conditionals,
             )
             if expanded is not None:
                 output.append(
@@ -253,6 +307,23 @@ def _process_text(
     return "".join(output)
 
 
+def _simplify_definition(
+    definition: MacroDefinition, options: ProcessOptions, source_path: Path,
+) -> MacroDefinition:
+    if options.conditionals is None:
+        return definition
+    return replace(
+        definition,
+        content=options.conditionals.simplify(definition.content, source=str(source_path)),
+    )
+
+
+def _definition_text(text: str, start: int, definition: MacroDefinition, original_content: str) -> str:
+    # The final balanced group is the body, whose original span may have changed.
+    body_start = definition.end - len(original_content) - 1
+    return text[start:body_start] + definition.content + "}"
+
+
 def _process_input(
     text: str,
     start: int,
@@ -263,7 +334,8 @@ def _process_input(
     stack: tuple[Path, ...],
 ) -> tuple[str, int]:
     argument = read_required_argument(text, start=start + len(r"\input"), source=str(source_path))
-    path_text = expand_path_text(argument.content.strip(), env)
+    content = _simplify_fragment(argument.content, options.conditionals, source=str(source_path))
+    path_text = expand_path_text(content.strip(), env)
     input_path = resolve_input_path(
         path_text,
         current_dir=source_path.parent,
@@ -288,7 +360,8 @@ def _process_if_file_exists(
     file_arg = read_required_argument(text, start=start + len(r"\IfFileExists"), source=str(source_path))
     then_arg = read_required_argument(text, start=file_arg.end, source=str(source_path))
     else_arg = read_required_argument(text, start=then_arg.end, source=str(source_path))
-    path_text = expand_path_text(file_arg.content.strip(), env)
+    content = _simplify_fragment(file_arg.content, options.conditionals, source=str(source_path))
+    path_text = expand_path_text(content.strip(), env)
     target = Path(path_text).expanduser()
     if not target.is_absolute():
         target = source_path.parent / target
@@ -313,11 +386,14 @@ def _rewrite_single_path_command(
     env: dict[str, MacroDefinition],
     source: str,
     allow_optional: bool,
+    conditionals: ConditionalSimplifier | None = None,
 ) -> tuple[str, int]:
     cursor = start + len("\\" + command_name)
     options_text, cursor = _read_optional_text(text, cursor, source=source) if allow_optional else ("", cursor)
     argument = read_required_argument(text, start=cursor, source=source)
-    path_text = expand_path_text(argument.content.strip(), env)
+    content = _simplify_fragment(argument.content, conditionals, source=source)
+    options_text = _simplify_fragment(options_text, conditionals, source=source)
+    path_text = expand_path_text(content.strip(), env)
     return f"\\{command_name}{options_text}" + "{" + path_text + "}", argument.end
 
 
@@ -329,16 +405,23 @@ def _rewrite_comma_path_command(
     env: dict[str, MacroDefinition],
     source: str,
     allow_optional: bool,
+    conditionals: ConditionalSimplifier | None = None,
 ) -> tuple[str, int]:
     cursor = start + len("\\" + command_name)
     options_text, cursor = _read_optional_text(text, cursor, source=source) if allow_optional else ("", cursor)
     argument = read_required_argument(text, start=cursor, source=source)
+    content = _simplify_fragment(argument.content, conditionals, source=source)
+    options_text = _simplify_fragment(options_text, conditionals, source=source)
     parts = [
         expand_path_text(part.strip(), env)
-        for part in argument.content.split(",")
+        for part in content.split(",")
         if part.strip()
     ]
     return f"\\{command_name}{options_text}" + "{" + ",".join(parts) + "}", argument.end
+
+
+def _simplify_fragment(text: str, conditionals: ConditionalSimplifier | None, *, source: str) -> str:
+    return text if conditionals is None else conditionals.simplify(text, source=source)
 
 
 def _parse_def(text: str, start: int, *, source: str) -> MacroDefinition | None:
@@ -389,6 +472,7 @@ def _expand_macro_call(
     *,
     env: dict[str, MacroDefinition],
     source: str,
+    conditionals: ConditionalSimplifier | None = None,
 ) -> tuple[str | None, int]:
     arguments: list[str] = []
     cursor = start
@@ -399,8 +483,12 @@ def _expand_macro_call(
             cursor = argument.end
     except LatexParseError:
         return None, start
-    expanded_args = [expand_path_text(argument, env) for argument in arguments]
+    expanded_args = [
+        expand_path_text(_simplify_fragment(argument, conditionals, source=source), env)
+        for argument in arguments
+    ]
     replacement = substitute_arguments(macro.content, expanded_args)
+    replacement = _simplify_fragment(replacement, conditionals, source=source)
     replacement = expand_path_text(replacement, env)
     return protect_trailing_control_word(replacement), cursor
 

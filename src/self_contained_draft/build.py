@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import yaml
 
 from .figures import FigureAsset, rewrite_figures
+from .conditionals import ConditionalError, validate_flags
 from .processor import process_file
 from .properties import PropertyInlineError, inline_property_macros
 from .refs import parse_aux_files, replace_external_refs
@@ -33,6 +34,7 @@ class BuildConfig:
     allow_missing_figures: bool = False
     copy_support_files: bool = False
     inline_property_macros: tuple[str, ...] = ()
+    conditional_flags: dict[str, bool] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -53,6 +55,7 @@ def load_config(
     input_override: str | Path | None = None,
     output_dir_override: str | Path | None = None,
     copy_support_files_override: bool | None = None,
+    conditional_flags_override: dict[str, bool] | None = None,
 ) -> BuildConfig:
     """Load a YAML build config."""
 
@@ -77,11 +80,18 @@ def load_config(
     input_path = _resolve_config_path(input_value, base_dir=base_dir)
     output_dir = _resolve_config_path(output_dir_value, base_dir=base_dir)
     output_tex = str(raw.get("output_tex") or input_path.name)
+    try:
+        conditional_flags = validate_flags(raw.get("conditional_flags", {}))
+        if conditional_flags_override is not None:
+            conditional_flags.update(validate_flags(conditional_flags_override))
+    except ConditionalError as exc:
+        raise BuildError(str(exc)) from exc
 
     return BuildConfig(
         input=input_path,
         output_dir=output_dir,
         output_tex=output_tex,
+        conditional_flags=conditional_flags,
         search_paths=tuple(
             _resolve_config_path(item, base_dir=base_dir)
             for item in _as_list(raw.get("search_paths", ()))
@@ -109,13 +119,17 @@ def load_config(
 def build_draft(config: BuildConfig) -> BuildResult:
     """Run the configured self-contained draft build."""
 
-    text = process_file(
-        config.input,
-        search_paths=config.search_paths,
-        strip_tex_comments=config.strip_comments,
-        allow_missing_inputs=config.allow_missing_inputs,
-        explicit_macros=config.expand_macros,
-    )
+    try:
+        text = process_file(
+            config.input,
+            search_paths=config.search_paths,
+            strip_tex_comments=config.strip_comments,
+            allow_missing_inputs=config.allow_missing_inputs,
+            explicit_macros=config.expand_macros,
+            conditional_flags=config.conditional_flags,
+        )
+    except ConditionalError as exc:
+        raise BuildError(str(exc)) from exc
 
     replaced_refs: tuple[str, ...] = ()
     unresolved_refs: tuple[str, ...] = ()

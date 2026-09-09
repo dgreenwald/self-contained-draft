@@ -54,6 +54,10 @@ copy_support_files: true
 inline_property_macros:
   - steady
   - param
+
+# Optional fixed values for \ifNAME ... \else ... \fi blocks.
+conditional_flags:
+  MyFlag: true
 ```
 
 Build the self-contained draft:
@@ -98,6 +102,8 @@ in that order within each directory.
 - Evaluates `\IfFileExists{path}{then}{else}` and processes the selected branch.
   The existence check uses the including file's directory; it does not consult
   `search_paths` or the TeX installation.
+- Selects branches of configured `\ifNAME ... \else ... \fi` blocks, including
+  inside retained macro definitions, before processing their contents.
 - Strips LaTeX comments while preserving TeX line-continuation behavior.
 - Copies figures and rewrites `\includegraphics` paths to local output names.
 - Uses `figure_aux` when provided so appendix figures can be named with their
@@ -133,6 +139,58 @@ Optional:
   Defaults to `false`.
 - `inline_property_macros`: expl3 property lookup macros to replace with raw
   values. Defaults to off.
+- `conditional_flags`: mapping of flag names to fixed boolean values. Defaults
+  to `{}` (no named conditional selection).
+
+## Conditional Branch Selection
+
+Set a flag in YAML:
+
+```yaml
+conditional_flags:
+  MyFlag: true
+  ShowAppendix: false
+```
+
+The build turns `\ifMyFlag yes\else no\fi` into `yes`. Setting `MyFlag: false`
+produces `no`. An omitted `\else` means the false branch is empty. Branch text
+keeps its meaningful whitespace; ignored spaces after conditional control words
+are consumed, and paragraph breaks and control-word boundaries are preserved.
+
+Keys are case-sensitive bare names using ASCII letters or `@`, without a leading
+backslash or `if` prefix. Values must be YAML booleans, not quoted strings or
+numbers. Names that would override built-in TeX conditionals are rejected.
+
+Override YAML values, or supply flags without a YAML mapping, with repeatable
+CLI options:
+
+```bash
+self-contained-draft build paper.yml --flag MyFlag=false --flag ShowAppendix=true
+```
+
+CLI values must be lowercase `true` or `false`. They override YAML values, and
+the last occurrence of a repeated flag wins. These are fixed build values:
+source assignments such as `\MyFlagfalse` do not change branch selection.
+Declarations (`\newif\ifMyFlag`) and assignments remain in the output.
+
+Selection applies to root and included files, macro bodies (even when the macro
+is retained), and expanded helpers. Discarded branches contribute no inputs,
+figures, support files, macro definitions, or property values. Files referenced
+only by discarded branches need not exist. Unconfigured conditionals remain for
+TeX to evaluate, while configured tests inside them are simplified.
+
+Nested blocks are supported when their openers are configured flags, standard
+TeX/e-TeX conditionals, or custom flags declared with `\newif` in encountered
+source. Nested `\ifcase`/`\or` structures are preserved without evaluation.
+Comments are ignored when matching delimiters, even with `strip_comments: false`.
+Missing `\fi`, duplicate `\else`, and unknown `\if...` commands nested in a
+configured block produce contextual errors rather than guessed boundaries.
+
+Each block must balance within its source file, macro body, or expanded fragment.
+Cross-file delimiters, arbitrary conditional aliases, and dynamically constructed
+conditional commands are unsupported. Prefixing a configured test with
+`\unless`, `\noexpand`, or `\string` is also rejected. This feature selects
+literal named tests; it does not implement general TeX execution.
 
 ## Property Lookup Inlining
 

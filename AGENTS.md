@@ -9,12 +9,16 @@ across many directories.
   - `build.py` orchestrates config loading and the build pipeline.
   - `cli.py` defines `build` and its overrides; `inspect-figures` is a placeholder.
   - `processor.py` performs path-aware recursive input flattening and macro expansion.
+  - `conditionals.py` selects configured named conditional branches and tracks
+    declarations needed to match nested conditionals.
   - `flatten.py` and `macros.py` provide standalone flattening and macro utilities;
     the build uses `processor.py`, so utility changes may also need integration changes.
   - `figures.py`, `support_files.py`, `refs.py`, and `properties.py` handle figure copying/naming, support-file copying, aux-reference replacement, and expl3 property inlining.
   - `latex.py` contains shared lightweight LaTeX parsing helpers. Prefer extending these helpers over ad hoc string parsing.
 - `tests/` contains focused pytest coverage by module plus an acceptance test.
-  Path-aware processor regressions currently live in `tests/test_build.py`.
+  Path-aware processor regressions live in `tests/test_build.py`; conditional
+  parser and build/CLI coverage is in `test_conditionals.py` and
+  `test_conditional_build.py`, including a conditional bundle acceptance test.
 
 ## Environment And Commands
 - Python requirement is `>=3.10`; runtime dependency is `PyYAML`.
@@ -39,7 +43,8 @@ across many directories.
 - Common YAML keys include `input`, `output_dir`, `output_tex`, `search_paths`,
   `expand_macros`, `external_aux`, `figure_aux`, `copy_support_files`,
   `strip_comments`, `allow_missing_inputs`, `allow_missing_figures`, and
-  `inline_property_macros`. Keep README defaults aligned with `load_config`.
+  `inline_property_macros`, and `conditional_flags`. Keep README defaults aligned
+  with `load_config`.
 - Relative config paths, including CLI overrides, resolve against the YAML
   directory. Nested inputs resolve against their including file; figures and
   support files resolve against the root TeX directory, then `search_paths`.
@@ -54,6 +59,9 @@ across many directories.
   lookup calls, such as `\steady{key}` or `\param{key}`, with raw values and
   removes the matching `\prop_gput:Nnn` property assignments and supported
   property initializers. Lookup helper definitions remain.
+- `conditional_flags` maps bare, case-sensitive flag names to booleans. Repeated
+  `--flag NAME=true|false` options override YAML; the last CLI value wins. These
+  fixed values override source assignments, which remain in the output.
 
 ## LaTeX Parsing Rules
 - Keep parsing conservative. This is not a complete TeX parser.
@@ -64,6 +72,8 @@ across many directories.
   - `%` line continuations must remove the newline and following indentation;
     otherwise macro bodies such as `\newcommand{\topct}[1]{% ... }` can gain a
     real leading space in the compiled PDF.
+  - Removing a comment after a control word must still separate that control
+    word from any following letters.
 - Do not broadly expand ordinary content macros. The processor should expand
   macros automatically only when needed for paths, and otherwise only when
   explicitly configured.
@@ -72,6 +82,13 @@ across many directories.
   existence check relative to the including file, without search-path lookup.
 - Distinguish standalone utility support from CLI support: the build requires
   braced inputs and does not flatten `\include` or implement general TeX scoping.
+- Select configured conditional branches before processing their contents,
+  including in retained macro bodies and arguments. Discarded branches must not
+  load files, expand dependencies, or change active definitions.
+- Use comment-aware control-sequence scanning for conditional boundaries. Skip
+  `\newif` operands and literal primitive operands, preserve unconfigured nested
+  tests, and reject ambiguous nesting. Blocks must balance within a file or
+  fragment; arbitrary aliases and TeX execution are outside this parser's scope.
 
 ## Testing Expectations
 - Add regression tests for parser or LaTeX-token changes. Small whitespace

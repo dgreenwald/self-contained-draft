@@ -7,6 +7,7 @@ from collections.abc import Sequence
 
 from . import __version__
 from .build import BuildError, build_draft, load_config
+from .conditionals import ConditionalError, validate_flags
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -29,6 +30,10 @@ def build_parser() -> argparse.ArgumentParser:
     build.add_argument("config", help="Path to the YAML build config.")
     build.add_argument("--input", help="Override the input TeX file.")
     build.add_argument("--output-dir", help="Override the output directory.")
+    build.add_argument(
+        "--flag", action="append", type=_parse_flag, default=[], metavar="NAME=true|false",
+        help="Select a conditional branch; overrides YAML and may be repeated (last value wins).",
+    )
     build.add_argument(
         "--copy-support-files",
         action="store_true",
@@ -53,6 +58,7 @@ def _build(args: argparse.Namespace) -> int:
             input_override=args.input,
             output_dir_override=args.output_dir,
             copy_support_files_override=True if args.copy_support_files else None,
+            conditional_flags_override=dict(args.flag),
         )
         result = build_draft(config)
     except BuildError as exc:
@@ -72,6 +78,17 @@ def _build(args: argparse.Namespace) -> int:
     if result.unresolved_refs:
         print(f"Unresolved external ref(s): {', '.join(result.unresolved_refs)}")
     return 0
+
+
+def _parse_flag(value: str) -> tuple[str, bool]:
+    name, separator, setting = value.partition("=")
+    if not separator or setting not in {"true", "false"}:
+        raise argparse.ArgumentTypeError("Expected --flag NAME=true or --flag NAME=false")
+    try:
+        validate_flags({name: setting == "true"})
+    except ConditionalError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+    return name, setting == "true"
 
 
 def _not_implemented(args: argparse.Namespace) -> int:
