@@ -674,3 +674,25 @@ def test_build_optional_defaults_and_redefinition(tmp_path):
     assert (tmp_path / 'submission/paper.tex').read_text() == (
         '\n{a]b}/x;/y;\n\n' r'override\unskip{} next;fallback\unskip{};'
     )
+
+
+def test_external_refs_exclude_local_labels_from_flattened_inputs(tmp_path):
+    (tmp_path / 'paper.tex').write_text(
+        r'\ref{local} \eqref{local} \ref{external} \ref{missing}' '\n'
+        r'\input{section}'
+    )
+    (tmp_path / 'section.tex').write_text(
+        r'\label{local}' '\n% \\label{missing}\n'
+    )
+    (tmp_path / 'appendix.aux').write_text(r'\newlabel{external}{{A.1}{1}}')
+    config = tmp_path / 'paper.yml'
+    config.write_text(
+        'input: paper.tex\nexternal_aux: [appendix.aux]\nstrip_comments: false\n'
+    )
+
+    result = build_draft(load_config(config))
+
+    assert result.unresolved_refs == ('missing',)
+    output = (tmp_path / 'submission/paper.tex').read_text()
+    assert r'\ref{local} \eqref{local} A.1 \ref{missing}' in output
+    assert r'\label{local}' in output

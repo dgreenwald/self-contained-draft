@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import re
 
-from .latex import LatexParseError, read_required_argument
+from .latex import LatexParseError, iter_control_sequences, read_required_argument, strip_comments
 
 
 class ReferenceError(RuntimeError):
@@ -75,13 +75,16 @@ def replace_external_refs(
     *,
     track_unresolved: bool = True,
 ) -> ReferenceReplacementResult:
-    """Replace configured external ``\\ref`` and ``\\eqref`` commands."""
+    """Replace external references, preserving references to local labels."""
 
     replaced: list[str] = []
     unresolved: list[str] = []
+    local_labels = _local_labels(text)
 
     def replace_match(match: re.Match[str]) -> str:
         label = match.group("label").strip()
+        if label in local_labels:
+            return match.group(0)
         value = labels.get(label)
         if value is None:
             if track_unresolved:
@@ -99,3 +102,19 @@ def replace_external_refs(
         replaced=tuple(dict.fromkeys(replaced)),
         unresolved=tuple(dict.fromkeys(unresolved)),
     )
+
+
+def _local_labels(text: str) -> set[str]:
+    """Collect literal label definitions, including forward references."""
+
+    text = strip_comments(text)
+    labels: set[str] = set()
+    for command in iter_control_sequences(text):
+        if command.name != "label":
+            continue
+        try:
+            argument = read_required_argument(text, start=command.end)
+        except LatexParseError:
+            continue
+        labels.add(argument.content.strip())
+    return labels

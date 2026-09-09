@@ -52,7 +52,9 @@ across many directories.
   numbers such as `A.1`, in copied figure filenames. Unmatched labels fall back
   to encounter order. Builds write `self_contained_manifest.json` for unique figures.
 - `external_aux` replaces matching `\ref` and `\eqref` calls; unmatched calls
-  remain and are reported, including internal references.
+  remain and are reported unless a matching literal `\label` exists in the
+  flattened manuscript. Local references remain LaTeX commands even when an
+  external aux file contains the same label.
 - Support-file copying is opt-in and skips missing files in the build pipeline.
   It copies directly referenced local files, without traversing their dependencies.
 - `inline_property_macros` is opt-in. It replaces configured expl3 property

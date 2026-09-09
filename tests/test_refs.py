@@ -74,3 +74,27 @@ def test_replace_external_refs_can_skip_unresolved_tracking():
     result = replace_external_refs(r"\ref{missing}", {}, track_unresolved=False)
 
     assert result.unresolved == ()
+
+
+@pytest.mark.parametrize('external', [{}, {'local': 'A.99'}])
+def test_local_refs_remain_for_latex_even_when_external_aux_has_same_label(external):
+    text = r'\ref{local} and \eqref{local}. \label {local}'
+    result = replace_external_refs(text, external)
+
+    assert result.text == text
+    assert result.replaced == ()
+    assert result.unresolved == ()
+
+
+def test_commented_and_escaped_labels_do_not_hide_missing_refs():
+    text = ('% \\label{commented}\n' r'\\label{escaped}' '\n'
+            r'\ref{commented} \eqref{escaped} \ref{missing} \ref{missing}')
+    result = replace_external_refs(text, {})
+
+    assert result.text == text
+    assert result.unresolved == ('commented', 'escaped', 'missing')
+
+
+def test_label_with_comment_continuation_is_local():
+    text = '\\ref{local} \\label% comment\n{local}'
+    assert replace_external_refs(text, {}).unresolved == ()

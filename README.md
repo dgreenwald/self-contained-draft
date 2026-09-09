@@ -229,10 +229,12 @@ keys and values. It does not evaluate arbitrary expl3 code or numeric expression
 
 ## References And Support Files
 
-`external_aux` replaces every matching `\ref` with its aux value and `\eqref`
+`external_aux` replaces matching `\ref` with its aux value and `\eqref`
 with that value in parentheses. Later aux files override duplicate labels from
-earlier files. References absent from those aux files remain unchanged and are
-reported by the CLI as unresolved, including ordinary internal references.
+earlier files. References to literal `\label{...}` definitions in the flattened
+manuscript remain as LaTeX commands and are excluded from unresolved warnings,
+even if an external aux file contains the same label. Other references absent
+from those aux files remain unchanged and are reported by the CLI as unresolved.
 Commands such as `\autoref`, `\cref`, and `\pageref` are not replaced.
 
 Support-file copying collects locally resolvable files referenced by
