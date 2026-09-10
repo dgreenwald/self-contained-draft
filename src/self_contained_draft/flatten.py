@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import re
 
-from .latex import LatexParseError, read_required_argument, strip_comments as strip_tex_comments
+from .latex import append_tex_replacement, LatexParseError, read_required_argument, strip_comments as strip_tex_comments
 from .macros import parse_macro_definitions
 
 
@@ -195,7 +195,10 @@ def _flatten_text(
                     f"Could not resolve \\input{{{command.path_text}}} from {source_path}"
                 )
         else:
-            output.append(_flatten_file(input_path, options=options, stack=stack))
+            append_tex_replacement(
+                output, _flatten_file(input_path, options=options, stack=stack),
+                following=text[command.end:],
+            )
 
         cursor = command.end
 

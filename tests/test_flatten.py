@@ -119,3 +119,27 @@ def test_flatten_file_can_disable_comment_stripping(tmp_path):
     root.write_text("A % keep comment")
 
     assert flatten_file(root, strip_comments=False) == "A % keep comment"
+
+
+@pytest.mark.parametrize("processor", [flatten_text, pytest.param(None, id="build-processor")])
+@pytest.mark.parametrize(
+    "prefix,content,suffix,expected",
+    [
+        (r"\protect", "Hello", "", r"\protect{}Hello"),
+        (r"\protect", "", "Hello", r"\protect{}Hello"),
+        (r"\protect", " Hello", "", r"\protect{} Hello"),
+        (r"\protect", r"\emph{Hello}", "", r"\protect\emph{Hello}"),
+        (r"\protect ", "Hello", "", r"\protect Hello"),
+        (r"\\", "Hello", "", r"\\Hello"),
+        ("", r"\unskip", "Hello", r"\unskip{}Hello"),
+    ],
+)
+def test_input_replacement_preserves_token_boundaries(tmp_path, processor, prefix, content, suffix, expected):
+    from self_contained_draft.processor import process_text
+
+    (tmp_path / "some_file.tex").write_text(content)
+    result = (processor or process_text)(
+        prefix + r"\input{some_file}" + suffix,
+        source_path=tmp_path / "paper.tex",
+    )
+    assert result == expected

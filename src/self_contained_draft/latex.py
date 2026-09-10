@@ -146,6 +146,18 @@ def join_tex_fragments(left: str, right: str) -> str:
     return protect_trailing_control_word(left, following=right) + right
 
 
+def append_tex_replacement(output: list[str], replacement: str, *, following: str) -> None:
+    """Preserve token boundaries on both sides of an inserted replacement."""
+
+    combined = join_tex_fragments("".join(output), replacement)
+    # Input files retain their source whitespace semantics at the right edge.
+    # Only letters require a new separator there; macro expansion handles its
+    # own trailing whitespace protection.
+    if re.match(r"[A-Za-z@]", following):
+        combined = protect_trailing_control_word(combined, following=following)
+    output[:] = [combined]
+
+
 BRACKET_PAIRS = {
     "(": ")",
     "[": "]",

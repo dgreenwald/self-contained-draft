@@ -11,6 +11,7 @@ from .conditionals import ConditionalSimplifier, validate_flags
 from .flatten import FlattenError, resolve_input_path
 from .latex import (
     LatexParseError,
+    append_tex_replacement,
     iter_control_sequences,
     join_tex_fragments,
     protect_trailing_control_word,
@@ -235,7 +236,7 @@ def _process_text(
                 options=options,
                 stack=stack,
             )
-            output.append(replacement)
+            append_tex_replacement(output, replacement, following=text[end:])
             cursor = end
             continue
 
@@ -248,7 +249,7 @@ def _process_text(
                 options=options,
                 stack=stack,
             )
-            output.append(replacement)
+            append_tex_replacement(output, replacement, following=text[end:])
             cursor = end
             continue
 
@@ -262,7 +263,7 @@ def _process_text(
                 allow_optional=True,
                 conditionals=options.conditionals,
             )
-            output.append(replacement)
+            append_tex_replacement(output, replacement, following=text[end:])
             cursor = end
             continue
 
@@ -276,7 +277,7 @@ def _process_text(
                 allow_optional=name in {"documentclass", "usepackage"},
                 conditionals=options.conditionals,
             )
-            output.append(replacement)
+            append_tex_replacement(output, replacement, following=text[end:])
             cursor = end
             continue
 
@@ -291,14 +292,16 @@ def _process_text(
                 conditionals=options.conditionals,
             )
             if expanded is not None:
-                output.append(
+                append_tex_replacement(
+                    output,
                     _process_text(
                         expanded,
                         source_path=source_path,
                         env=env,
                         options=options,
                         stack=stack,
-                    )
+                    ),
+                    following=text[end:],
                 )
                 cursor = end
                 continue

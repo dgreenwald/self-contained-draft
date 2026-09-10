@@ -270,3 +270,26 @@ def test_invalid_optional_definition(parameters):
 
     with pytest.raises(LatexParseError):
         parse_macros(r'\newcommand{\foo}' + parameters + '{body}')
+
+
+@pytest.mark.parametrize("content", ["Hello", ""])
+def test_macro_replacement_preserves_preceding_control_word(tmp_path, content):
+    from self_contained_draft.processor import process_text
+
+    definition = r"\newcommand{\greeting}[1]{" + content + "}"
+    call = r"\protect\greeting{x}World"
+    expected = r"\protect{}" + content + "World"
+    assert expand_configured_macros(definition + call, parse_macros(definition), ["greeting"]) == definition + expected
+    assert process_text(
+        definition + call, source_path=tmp_path / "paper.tex",
+        explicit_macros=("greeting",),
+    ) == expected
+
+
+def test_file_exists_replacement_preserves_preceding_control_word(tmp_path):
+    from self_contained_draft.processor import process_text
+
+    assert process_text(
+        r"\protect\IfFileExists{missing}{unused}{Hello}",
+        source_path=tmp_path / "paper.tex",
+    ) == r"\protect{}Hello"
