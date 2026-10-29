@@ -216,7 +216,10 @@ self-contained-draft build paper.yml --flag MyFlag=false --flag ShowAppendix=tru
 CLI values must be lowercase `true` or `false`. They override YAML values, and
 the last occurrence of a repeated flag wins. These are fixed build values:
 source assignments such as `\MyFlagfalse` do not change branch selection.
-Declarations (`\newif\ifMyFlag`) and assignments remain in the output.
+The corresponding declarations (`\newif\ifMyFlag`) and setters
+(`\MyFlagtrue`, `\MyFlagfalse`) are removed from the output, including
+`\global` prefixes on those setters. Unconfigured flags keep their declarations
+and setters. Comments are retained when `strip_comments: false`.
 
 Selection applies to root and included files, macro bodies (even when the macro
 is retained), and expanded helpers. Discarded branches contribute no inputs,
@@ -233,7 +236,7 @@ configured block produce contextual errors rather than guessed boundaries.
 
 Each block must balance within its source file, macro body, or expanded fragment.
 Cross-file delimiters, arbitrary conditional aliases, and dynamically constructed
-conditional commands are unsupported. Prefixing a configured test with
+conditional commands are unsupported. Prefixing a configured test or setter with
 `\unless`, `\noexpand`, or `\string` is also rejected. This feature selects
 literal named tests; it does not implement general TeX execution.
 

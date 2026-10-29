@@ -36,7 +36,7 @@ def test_nested_configured_and_unconfigured_conditionals():
 def test_newif_operands_and_unconfigured_nested_flags():
     prefix = r"\newif\ifOther \newif\ifMyFlag \MyFlagfalse "
     text = prefix + r"\ifMyFlag A\ifOther B\else C\fi D\else E\fi"
-    assert simplify(text) == prefix + r"A\ifOther B\else C\fi D"
+    assert simplify(text) == r"\newif\ifOther A\ifOther B\else C\fi D"
 
 
 def test_newif_in_discarded_branch_does_not_register_flag():
@@ -108,15 +108,15 @@ def test_processor_ignores_commented_delimiters(strip_comments, tmp_path):
     assert actual == ("yes" if strip_comments else "% opening\nyes% \\else fake\n")
 
 
-def test_macro_definition_and_source_setters_are_preserved(tmp_path):
+def test_macro_definition_is_simplified_and_source_flag_setup_is_removed(tmp_path):
     text = r"\newif\ifMyFlag \MyFlagfalse \newcommand{\word}{\ifMyFlag yes\else no\fi}\word"
     assert process_text(text, source_path=tmp_path / "paper.tex", conditional_flags={"MyFlag": True}) == (
-        r"\newif\ifMyFlag \MyFlagfalse \newcommand{\word}{yes}\word"
+        r"\newcommand{\word}{yes}\word"
     )
 
 
 def test_empty_configuration_preserves_conditionals(tmp_path):
-    text = r"\newif\ifMyFlag \ifMyFlag yes\else no\fi"
+    text = r"\newif\ifMyFlag \MyFlagtrue \ifMyFlag yes\else no\fi"
     assert process_text(text, source_path=tmp_path / "paper.tex") == text
 
 
@@ -138,3 +138,47 @@ def test_discarding_branch_does_not_merge_escaped_backslash_with_text(tmp_path):
     text = r"\\word\ifMyFlag\else ignored\fi tail"
     assert simplify(text) == r"\\wordtail"
     assert process_text(text, source_path=tmp_path / "paper.tex", conditional_flags={"MyFlag": True}) == r"\\wordtail"
+
+
+@pytest.mark.parametrize('backend', ['simplifier', 'processor'])
+@pytest.mark.parametrize(('text', 'expected'), [
+    (r'\newif\ifMyFlag\MyFlagtrue\MyFlagfalse\ifMyFlag yes\else no\fi', 'yes'),
+    (r'\MyFlagfalse\MyFlagtrue done', 'done'),
+    (r'\global\MyFlagtrue\global \MyFlagfalse done', 'done'),
+    (r'\newif\ifOther\Othertrue\MyFlagfalse\Otherfalse', r'\newif\ifOther\Othertrue\Otherfalse'),
+    (r'\newif\ifMyFlagExtra\MyFlagExtratrue\myflagtrue\MyFlagtrueExtra',
+     r'\newif\ifMyFlagExtra\MyFlagExtratrue\myflagtrue\MyFlagtrueExtra'),
+    (r'\unskip\MyFlagtrue text', r'\unskip{}text'),
+    (r'\unskip\newif\ifMyFlag text', r'\unskip{}text'),
+    ('A\\MyFlagfalse\n\nB', 'A\n\nB'),
+    ('A\\newif\\ifMyFlag\n\nB', 'A\n\nB'),
+    (r'\newcommand{\setup}{\MyFlagtrue\global\MyFlagfalse}', r'\newcommand{\setup}{}'),
+    (r'\ifMyFlag\MyFlagfalse yes\else\MyFlagtrue no\fi', 'yes'),
+    (r'\ifx\MyFlagtrue\Othertrue A\else B\fi', r'\ifx\MyFlagtrue\Othertrue A\else B\fi'),
+    (r'\\MyFlagtrue', r'\\MyFlagtrue'),
+    ('% \\newif\\ifMyFlag \\MyFlagtrue\ntext', '% \\newif\\ifMyFlag \\MyFlagtrue\ntext'),
+    ('\\newif% declaration\n\\ifMyFlag% operand\n\\MyFlagfalse% setter\ntext',
+     '% declaration\n% operand\n% setter\ntext'),
+    ('\\global% prefix\n\\MyFlagfalse% setter\ntext', '% prefix\n% setter\ntext'),
+])
+def test_configured_flag_setup_removal(backend, text, expected, tmp_path):
+    if backend == 'simplifier':
+        result = simplify(text)
+    else:
+        result = process_text(text, source_path=tmp_path / 'paper.tex',
+                              strip_tex_comments=False, conditional_flags={'MyFlag': True})
+    assert result == expected
+
+
+@pytest.mark.parametrize('prefix', ['unless', 'noexpand', 'string'])
+def test_unsupported_prefix_on_configured_setter_is_rejected(prefix, tmp_path):
+    text = '\\' + prefix + r'\MyFlagtrue'
+    with pytest.raises(ConditionalError, match='Unsupported'):
+        process_text(text, source_path=tmp_path / 'paper.tex', conditional_flags={'MyFlag': True})
+
+
+def test_removed_declarations_still_register_for_boundary_matching():
+    engine = ConditionalSimplifier({'MyFlag': True})
+    assert engine.simplify(r'\newif\ifMyFlag\newif\ifOther') == r'\newif\ifOther'
+    assert engine.declared == {'ifMyFlag', 'ifOther'}
+    assert engine.simplify(r'\ifMyFlag\ifOther A\else B\fi\fi') == r'\ifOther A\else B\fi'

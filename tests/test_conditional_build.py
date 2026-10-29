@@ -98,7 +98,8 @@ def test_conditional_bundle_acceptance(tmp_path):
                        "copy_support_files: true\ninline_property_macros: [value]\n")
     result = build_draft(load_config(path))
     output = result.output_tex.read_text()
-    assert r"\Publishfalse" in output
+    assert r"\Publishfalse" not in output
+    assert r"\newif\ifPublish" not in output
     assert r"\includegraphics{fig_1}" in output
     assert output.endswith("1")
     assert "999" not in output
@@ -120,3 +121,37 @@ def test_discarded_macro_argument_is_not_expanded(tmp_path):
     )
     path = config_file(tmp_path, "conditional_flags: {MyFlag: true}\nexpand_macros: [identity]\n")
     assert build_draft(load_config(path)).output_tex.read_text() == r"\def\loop{\loop}yes"
+
+
+@pytest.mark.parametrize('strip_comments', [True, False])
+def test_flag_setup_removed_from_inputs_and_retained_macro_bodies(tmp_path, strip_comments):
+    (tmp_path / 'flags.tex').write_text(
+        '\\newif% declaration\n\\ifMyFlag\n'
+        r'\MyFlagtrue\global\MyFlagfalse' '\n'
+        r'\newif\ifOther\Othertrue'
+    )
+    (tmp_path / 'body.tex').write_text(
+        r'\newcommand{\word}{\MyFlagfalse\ifMyFlag yes\else no\fi}'
+        r'\ifMyFlag\MyFlagfalse selected\else\MyFlagtrue discarded\fi'
+    )
+    (tmp_path / 'paper.tex').write_text(r'\input{flags}\input{body}\word')
+    path = config_file(tmp_path, f'conditional_flags: {{MyFlag: true}}\nstrip_comments: {str(strip_comments).lower()}\n')
+
+    output = build_draft(load_config(path)).output_tex.read_text()
+
+    assert r'\ifMyFlag' not in output
+    assert r'\MyFlagtrue' not in output
+    assert r'\MyFlagfalse' not in output
+    assert r'\global' not in output
+    assert r'\newif\ifOther\Othertrue' in output
+    assert r'\newcommand{\word}{yes}selected\word' in output
+    assert ('% declaration' in output) == (not strip_comments)
+
+
+def test_cli_flag_override_removes_original_setup(tmp_path):
+    (tmp_path / 'paper.tex').write_text(
+        r'\newif\ifMyFlag\MyFlagtrue\ifMyFlag yes\else no\fi'
+    )
+    path = config_file(tmp_path, 'conditional_flags: {MyFlag: true}\n')
+    assert main(['build', str(path), '--flag', 'MyFlag=false']) == 0
+    assert (tmp_path / 'submission/paper.tex').read_text() == 'no'

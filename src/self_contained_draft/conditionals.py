@@ -56,12 +56,44 @@ class ConditionalSimplifier:
     def configured(self, name: str) -> bool:
         return name.startswith("if") and name[2:] in self.flags
 
+    def assignment(self, name: str) -> bool:
+        """Whether this is an exact setter name for a configured flag."""
+        return any(
+            name.endswith(suffix) and name[:-len(suffix)] in self.flags
+            for suffix in ("true", "false")
+        )
+
+    def remove_flag_setup(self, text: str, token: ControlSequence) -> tuple[str, int] | None:
+        """Remove configured newif declarations and setters, keeping comments."""
+
+        comments = ""
+        end = token.end
+        if token.name in {"newif", "global"}:
+            operand = next(iter(iter_control_sequences(text, start=token.end)), None)
+            if operand is None or strip_comments(text[token.end:operand.start]).strip():
+                return None
+            comments, begin = control_word_suffix(text, token.end)
+            comments += text[begin:operand.start]
+            if token.name == "global":
+                removed = self.remove_flag_setup(text, operand)
+                if removed is None:
+                    return None
+                return comments + removed[0], removed[1]
+            if not self.configured(operand.name):
+                return None
+            end = self.declaration_end(text, token)
+        elif not self.assignment(token.name):
+            return None
+        suffix, end = control_word_suffix(text, end)
+        return comments + suffix, end
+
     def operand_end(self, text: str, token: ControlSequence, *, source: str | None = None) -> int:
         """Protect primitive operands and reject prefixes that change selection."""
         if token.name in {"unless", "noexpand", "string"}:
             operand = next(iter(iter_control_sequences(text, start=token.end)), None)
             if (
-                operand is not None and self.configured(operand.name)
+                operand is not None
+                and (self.configured(operand.name) or self.assignment(operand.name))
                 and not strip_comments(text[token.end:operand.start]).strip()
             ):
                 raise ConditionalError(
@@ -152,7 +184,13 @@ class ConditionalSimplifier:
         for token in iter_control_sequences(text):
             if token.start < max(cursor, skip_until):
                 continue
-            if token.name == "newif":
+            removed = self.remove_flag_setup(text, token)
+            if removed is not None:
+                comments, end = removed
+                output = join_tex_fragments(output, text[cursor:token.start])
+                output = join_tex_fragments(output, comments)
+                cursor = end
+            elif token.name == "newif":
                 skip_until = self.declaration_end(text, token)
             elif self.configured(token.name):
                 branch, end = self.select(text, token, source=source)

@@ -178,6 +178,13 @@ def _process_text(
         output.append(text[cursor : match.start()])
 
         if options.conditionals is not None:
+            removed = options.conditionals.remove_flag_setup(text, token)
+            if removed is not None:
+                comments, end = removed
+                combined = join_tex_fragments("".join(output), comments)
+                output = [protect_trailing_control_word(combined, following=text[end:])]
+                cursor = end
+                continue
             if name == "newif":
                 end = options.conditionals.declaration_end(text, token)
                 output.append(text[match.start():end])

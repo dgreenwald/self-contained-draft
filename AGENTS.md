@@ -71,7 +71,10 @@ across many directories.
   property initializers. Lookup helper definitions remain.
 - `conditional_flags` maps bare, case-sensitive flag names to booleans. Repeated
   `--flag NAME=true|false` options override YAML; the last CLI value wins. These
-  fixed values override source assignments, which remain in the output.
+  fixed values override source assignments. Matching `\newif` declarations
+  and `\NAMEtrue`/`\NAMEfalse` setters (including `\global` prefixes) are
+  removed; unconfigured declarations and setters remain. Preserve comments
+  and token/paragraph boundaries when removing flag setup.
 
 ## LaTeX Parsing Rules
 - Keep parsing conservative. This is not a complete TeX parser.
