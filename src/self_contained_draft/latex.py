@@ -221,6 +221,22 @@ def strip_comments(text: str) -> str:
     return "".join(output)
 
 
+def mask_comments(text: str) -> str:
+    """Replace comments with spaces, preserving newlines and source offsets."""
+
+    output = list(text)
+    index = 0
+    while index < len(text):
+        if text[index] == "%" and not _is_escaped(text, index):
+            end = text.find("\n", index)
+            end = len(text) if end < 0 else end
+            output[index:end] = " " * (end - index)
+            index = end
+        else:
+            index += 1
+    return "".join(output)
+
+
 def read_balanced(
     text: str,
     *,

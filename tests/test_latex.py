@@ -120,3 +120,16 @@ def test_optional_argument_brackets_follow_tex_grouping():
     match = read_optional_argument('[{a]b}\\]c% ignored ]\nend]tail')
     assert match.content == '{a]b}\\]c% ignored ]\nend'
     assert match.after == 'tail'
+
+
+def test_mask_comments_preserves_offsets_newlines_and_escaped_percent():
+    from self_contained_draft.latex import mask_comments
+
+    text = "prefix% } \\input{x}\n\\% literal \\\\% comment\nend"
+    masked = mask_comments(text)
+    assert len(masked) == len(text)
+    assert masked.index("end") == text.index("end")
+    assert masked.count("\n") == text.count("\n")
+    assert "\\% literal" in masked
+    assert "comment" not in masked
+    assert "\\input" not in masked

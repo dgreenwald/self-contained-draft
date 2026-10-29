@@ -37,7 +37,7 @@ def build_parser() -> argparse.ArgumentParser:
     build.add_argument(
         "--copy-support-files",
         action="store_true",
-        help="Copy local .bib, .bst, .cls, and .sty files referenced by the document.",
+        help="Copy local support files and dependencies of local classes and styles.",
     )
     build.set_defaults(func=_build)
 
@@ -66,7 +66,7 @@ def _build(args: argparse.Namespace) -> int:
 
     print(f"Wrote {result.output_tex}")
     print(f"Copied {len(result.figure_assets)} figure asset(s)")
-    if config.copy_support_files:
+    if config.copy_support_files or config.extra_files:
         print(f"Copied {len(result.support_files)} support file(s)")
     if result.inlined_property_macros:
         macros = ", ".join(f"\\{name}" for name in result.inlined_property_macros)

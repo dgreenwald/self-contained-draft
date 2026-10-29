@@ -696,3 +696,32 @@ def test_external_refs_exclude_local_labels_from_flattened_inputs(tmp_path):
     output = (tmp_path / 'submission/paper.tex').read_text()
     assert r'\ref{local} \eqref{local} A.1 \ref{missing}' in output
     assert r'\label{local}' in output
+
+
+def test_external_subrefs_after_configured_wrapper_expansion(tmp_path):
+    (tmp_path / 'paper.tex').write_text(
+        r'\newcommand{\psubref}[1]{(\subref{#1})}' '\n'
+        r'Appendix Figure~\ref{fig:example}\psubref{fig:panel}' '\n'
+        r'Local \psubref{fig:local}; missing \psubref{fig:missing}' '\n'
+        r'\input{panels}'
+    )
+    (tmp_path / 'panels.tex').write_text(r'\label{fig:local}')
+    (tmp_path / 'appendix.aux').write_text(
+        r'\newlabel{fig:example}{{B.12}{1}}' '\n'
+        r'\newlabel{fig:panel}{{B.12a}{1}}' '\n'
+        r'\newlabel{sub@fig:panel}{{a}{1}}' '\n'
+        r'\newlabel{sub@fig:local}{{z}{1}}' '\n'
+        r'\newlabel{fig:missing}{{B.12b}{1}}'
+    )
+    config = tmp_path / 'paper.yml'
+    config.write_text(
+        'input: paper.tex\nexternal_aux: [appendix.aux]\nexpand_macros: [psubref]\n'
+    )
+
+    result = build_draft(load_config(config))
+
+    output = result.output_tex.read_text()
+    assert 'Appendix Figure~B.12(a)' in output
+    assert r'Local (\subref{fig:local}); missing (\subref{fig:missing})' in output
+    assert result.replaced_refs == ('fig:example', 'fig:panel')
+    assert result.unresolved_refs == ('fig:missing',)

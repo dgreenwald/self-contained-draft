@@ -41,7 +41,7 @@ across many directories.
 
 ## Configuration Notes
 - Common YAML keys include `input`, `output_dir`, `output_tex`, `search_paths`,
-  `expand_macros`, `external_aux`, `figure_aux`, `copy_support_files`,
+  `expand_macros`, `external_aux`, `figure_aux`, `copy_support_files`, `extra_files`,
   `strip_comments`, `allow_missing_inputs`, `allow_missing_figures`, and
   `inline_property_macros`, and `conditional_flags`. Keep README defaults aligned
   with `load_config`.
@@ -51,12 +51,20 @@ across many directories.
 - `figure_aux` is used to preserve document figure numbering, including appendix
   numbers such as `A.1`, in copied figure filenames. Unmatched labels fall back
   to encounter order. Builds write `self_contained_manifest.json` for unique figures.
-- `external_aux` replaces matching `\ref` and `\eqref` calls; unmatched calls
+- `external_aux` replaces matching `\ref`, `\eqref`, and `\subref` calls.
+  Subreferences use the `sub@label` aux entry for the panel letter; unmatched calls
   remain and are reported unless a matching literal `\label` exists in the
   flattened manuscript. Local references remain LaTeX commands even when an
   external aux file contains the same label.
-- Support-file copying is opt-in and skips missing files in the build pipeline.
-  It copies directly referenced local files, without traversing their dependencies.
+- Support-file copying is opt-in and skips unresolved automatic references in
+  the build pipeline. Copied classes/styles and their literal input files are
+  scanned recursively for local package, class, input, and graphics dependencies.
+  Dependencies resolve against the referring file, root TeX directory, then
+  `search_paths`. Assets preserve safe relative paths; copied references resolve
+  from the bundle root. Cycles and destination collisions fail the build.
+- `extra_files` accepts YAML-relative file paths or `{source, destination}`
+  mappings. It works independently of `copy_support_files`, does not traverse
+  dependencies, and fails for missing files or invalid bundle destinations.
 - `inline_property_macros` is opt-in. It replaces configured expl3 property
   lookup calls, such as `\steady{key}` or `\param{key}`, with raw values and
   removes the matching `\prop_gput:Nnn` property assignments and supported

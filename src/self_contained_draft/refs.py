@@ -23,7 +23,7 @@ class ReferenceReplacementResult:
 
 
 NEWLABEL_PATTERN = re.compile(r"\\newlabel\b")
-REF_PATTERN = re.compile(r"\\(?P<kind>eqref|ref)\s*\{(?P<label>[^{}]+)\}")
+REF_PATTERN = re.compile(r"\\(?P<kind>eqref|subref|ref)\s*\{(?P<label>[^{}]+)\}")
 
 
 def parse_aux_labels(text: str, *, source: str | None = None) -> dict[str, str]:
@@ -83,16 +83,18 @@ def replace_external_refs(
 
     def replace_match(match: re.Match[str]) -> str:
         label = match.group("label").strip()
-        if label in local_labels:
+        kind = match.group("kind")
+        aux_label = f"sub@{label}" if kind == "subref" else label
+        if label in local_labels or aux_label in local_labels:
             return match.group(0)
-        value = labels.get(label)
+        value = labels.get(aux_label)
         if value is None:
             if track_unresolved:
                 unresolved.append(label)
             return match.group(0)
 
         replaced.append(label)
-        if match.group("kind") == "eqref":
+        if kind == "eqref":
             return f"({value})"
         return value
 

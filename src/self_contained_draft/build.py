@@ -8,12 +8,15 @@ from typing import Any
 
 import yaml
 
-from .figures import FigureAsset, rewrite_figures
 from .conditionals import ConditionalError, validate_flags
+from .figures import FigureAsset, rewrite_figures
+from .latex import LatexParseError
 from .processor import process_file
 from .properties import PropertyInlineError, inline_property_macros
 from .refs import parse_aux_files, replace_external_refs
-from .support_files import SupportFile, copy_support_files
+from .support_files import (
+    ExtraFile, SupportFile, SupportFileError, copy_support_files,
+)
 
 
 class BuildError(RuntimeError):
@@ -35,6 +38,7 @@ class BuildConfig:
     copy_support_files: bool = False
     inline_property_macros: tuple[str, ...] = ()
     conditional_flags: dict[str, bool] = field(default_factory=dict)
+    extra_files: tuple[ExtraFile, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -110,6 +114,7 @@ def load_config(
         allow_missing_inputs=bool(raw.get("allow_missing_inputs", False)),
         allow_missing_figures=bool(raw.get("allow_missing_figures", False)),
         copy_support_files=copy_support,
+        extra_files=_load_extra_files(raw.get("extra_files", ()), base_dir=base_dir),
         inline_property_macros=tuple(
             str(item) for item in _as_list(raw.get("inline_property_macros", ()))
         ),
@@ -148,18 +153,32 @@ def build_draft(config: BuildConfig) -> BuildResult:
             raise BuildError(str(exc)) from exc
         text = property_result.text
 
-    support_files: tuple[SupportFile, ...] = ()
     config.output_dir.mkdir(parents=True, exist_ok=True)
-    if config.copy_support_files:
+    # Resolve figure names without writing, so all bundle destinations can be
+    # checked together before support files or figure assets are copied.
+    figure_preview = rewrite_figures(
+        text, source_dir=config.input.parent, output_dir=config.output_dir,
+        search_paths=config.search_paths, allow_missing_figures=config.allow_missing_figures,
+        aux_file=config.figure_aux, copy_assets=False, write_manifest=False,
+    )
+    try:
         support_result = copy_support_files(
             text,
             source_dir=config.input.parent,
             output_dir=config.output_dir,
             search_paths=config.search_paths,
             allow_missing=True,
+            collect_references=config.copy_support_files,
+            extra_files=config.extra_files,
+            reserved_outputs=(
+                config.output_tex, "self_contained_manifest.json",
+                *(asset.output_name for asset in figure_preview.assets),
+            ),
         )
-        text = support_result.text
-        support_files = support_result.files
+    except (SupportFileError, LatexParseError, OSError, UnicodeError) as exc:
+        raise BuildError(str(exc)) from exc
+    text = support_result.text
+    support_files = support_result.files
 
     figure_result = rewrite_figures(
         text,
@@ -172,6 +191,7 @@ def build_draft(config: BuildConfig) -> BuildResult:
     text = figure_result.text
 
     output_tex_path = config.output_dir / config.output_tex
+    output_tex_path.parent.mkdir(parents=True, exist_ok=True)
     output_tex_path.write_text(text)
     return BuildResult(
         output_tex=output_tex_path,
@@ -210,3 +230,25 @@ def _resolve_config_path(value: str | Path, *, base_dir: Path) -> Path:
     if not path.is_absolute():
         path = base_dir / path
     return path.resolve()
+
+
+def _load_extra_files(value: Any, *, base_dir: Path) -> tuple[ExtraFile, ...]:
+    entries: list[ExtraFile] = []
+    for item in _as_list(value):
+        if isinstance(item, str):
+            source = item
+            destination = item
+        elif isinstance(item, dict) and set(item) == {"source", "destination"}:
+            source = item["source"]
+            destination = item["destination"]
+        else:
+            raise BuildError("extra_files entries must be paths or {source, destination} mappings")
+        if not isinstance(source, str) or not source or not isinstance(destination, str):
+            raise BuildError("extra_files source and destination must be nonempty paths")
+        if (not destination or Path(destination).expanduser().is_absolute()
+                or ".." in Path(destination).parts or Path(destination) == Path(".")):
+            raise BuildError(f"Invalid bundle destination: {destination!r}")
+        entries.append(ExtraFile(
+            _resolve_config_path(source, base_dir=base_dir), Path(destination).as_posix(),
+        ))
+    return tuple(entries)

@@ -47,7 +47,7 @@ external_aux:
 # Optional aux file used to name figures according to document numbering.
 figure_aux: paper.aux
 
-# Copy local .bib, .bst, .cls, and .sty files.
+# Copy local .bib, .bst, .cls, and .sty files and class/style dependencies.
 copy_support_files: true
 
 # Optional expl3 property lookup macros to inline as raw values.
@@ -111,7 +111,7 @@ in that order within each directory.
   encounter order, with panel suffixes such as `fig_1a.pdf` and `fig_1b.pdf` for
   multiple graphics within a `figure` or `figure*` environment.
 - Replaces external references from `external_aux` files.
-- Copies local support files when `copy_support_files: true`.
+- Copies local support files and class/style dependencies when `copy_support_files: true`.
 - Optionally inlines expl3 property lookups from `inline_property_macros`.
 
 ## Configuration Reference
@@ -127,20 +127,64 @@ Optional:
 - `search_paths`: additional directories for resolving inputs, figures, and
   support files.
 - `expand_macros`: macro names to expand outside path contexts.
-- `external_aux`: aux files used to replace matching `\ref{...}` and
-  `\eqref{...}` values. Defaults to none.
+- `external_aux`: aux files used to replace matching `\ref{...}`,
+  `\eqref{...}`, and `\subref{...}` values. Defaults to none.
 - `figure_aux`: aux file used to map figure labels to document figure numbers.
 - `strip_comments`: whether to strip comments. Defaults to `true`.
 - `allow_missing_inputs`: preserve unresolved inputs instead of failing.
   Defaults to `false`.
 - `allow_missing_figures`: preserve unresolved figures instead of failing.
   Defaults to `false`.
-- `copy_support_files`: copy local `.bib`, `.bst`, `.cls`, and `.sty` files.
-  Defaults to `false`.
+- `copy_support_files`: copy local `.bib`, `.bst`, `.cls`, and `.sty` files,
+  recursively collecting local class/style dependencies. Defaults to `false`.
+- `extra_files`: explicit files to copy, including when `copy_support_files` is
+  `false`. Defaults to `[]`. Accepts relative paths or `{source, destination}`
+  mappings; see below.
 - `inline_property_macros`: expl3 property lookup macros to replace with raw
   values. Defaults to off.
 - `conditional_flags`: mapping of flag names to fixed boolean values. Defaults
   to `{}` (no named conditional selection).
+
+## Local Template Dependencies
+
+With `copy_support_files: true`, the builder scans copied `.cls` and `.sty`
+files for `\RequirePackage`, `\LoadClass`, literal braced `\input`, and
+`\includegraphics` references. It also scans text files reached through
+`\input`, including dependencies in macro bodies. Comments are ignored;
+package lists, optional arguments, starred graphics commands, and common
+image extension fallbacks are supported.
+
+Dependencies resolve against the referring file's directory, then the root
+manuscript directory, then `search_paths`. Only local files are collected:
+installed TeX packages remain external, and unresolved references stay unchanged.
+The builder does not execute template conditionals or expand computed paths.
+
+Classes, styles, and bibliography files are copied to the bundle root. Inputs
+and assets retain safe relative paths, such as `thumbnails/cas-email.jpeg`.
+Absolute paths and paths containing `..` are relocated to their basenames.
+References in copied text files are rewritten relative to the bundle root;
+these bundles are intended to compile from that directory. Template assets
+keep their names and do not enter the manuscript figure-numbering manifest.
+Dependency cycles fail with the reference chain. Conflicting destinations,
+including collisions with generated figures, the manuscript, or its manifest,
+fail before collected files are copied.
+
+For dependencies the parser cannot discover, list individual files explicitly:
+
+```yaml
+extra_files:
+  - thumbnails/custom-logo.jpeg
+  - source: ../shared/template-data.dat
+    destination: data/template-data.dat
+```
+
+Sources resolve relative to the YAML directory. A string entry preserves that
+relative path in the bundle. Absolute sources or sources outside the YAML
+directory require a mapping with an explicit bundle-relative destination.
+Destinations cannot be absolute or contain `..`. Missing files, directories,
+and destination collisions are errors; globs are not expanded. Explicit files
+are copied without dependency traversal and do not require
+`copy_support_files: true`.
 
 ## Conditional Branch Selection
 
@@ -230,20 +274,31 @@ keys and values. It does not evaluate arbitrary expl3 code or numeric expression
 ## References And Support Files
 
 `external_aux` replaces matching `\ref` with its aux value and `\eqref`
-with that value in parentheses. Later aux files override duplicate labels from
+with that value in parentheses. For `\subref{label}`, it looks up `sub@label`
+and inserts the panel letter (such as `a`) without parentheses. Later aux files
+override duplicate labels from
 earlier files. References to literal `\label{...}` definitions in the flattened
 manuscript remain as LaTeX commands and are excluded from unresolved warnings,
 even if an external aux file contains the same label. Other references absent
 from those aux files remain unchanged and are reported by the CLI as unresolved.
-Commands such as `\autoref`, `\cref`, and `\pageref` are not replaced.
+Missing panel entries are reported using the original reference label, even
+when the ordinary figure label exists in the aux data. Local subfigure labels
+remain LaTeX commands. Commands such as `\autoref`, `\cref`, and `\pageref`
+are not replaced.
+
+For a wrapper defined as `\newcommand{\psubref}[1]{(\subref{#1})}`, configure
+`expand_macros: [psubref]` alongside `external_aux`. Macro expansion runs first,
+so `Appendix Figure~\ref{fig:example}\psubref{fig:panel}` becomes
+`Appendix Figure~B.12(a)` when the aux contains `fig:example` with value `B.12`
+and `sub@fig:panel` with value `a`.
 
 Support-file copying collects locally resolvable files referenced by
 `\bibliography`, `\bibliographystyle`, `\addbibresource`, `\documentclass`, and
 `\usepackage`. It preserves their basenames and rewrites the corresponding
 paths. Missing support files remain unchanged, so installed TeX packages need
-not be present locally. Dependencies inside copied support files are not scanned
-recursively; files from different directories must have distinct basenames to
-avoid overwriting one another.
+not be present locally. Class/style dependencies are collected recursively as
+described under Local Template Dependencies; conflicting destinations fail
+instead of overwriting one another.
 
 ## Parser Scope
 

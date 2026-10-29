@@ -98,3 +98,37 @@ def test_commented_and_escaped_labels_do_not_hide_missing_refs():
 def test_label_with_comment_continuation_is_local():
     text = '\\ref{local} \\label% comment\n{local}'
     assert replace_external_refs(text, {}).unresolved == ()
+
+
+def test_external_subrefs_use_panel_letters_from_aux():
+    labels = parse_aux_labels(
+        r'\newlabel{fig:panel}{{B.12a}{1}}' '\n'
+        r'\newlabel{sub@fig:panel}{{a}{1}}'
+    )
+    result = replace_external_refs(r'\ref{fig:panel}, (\subref{fig:panel})', labels)
+
+    assert result.text == 'B.12a, (a)'
+    assert result.replaced == ('fig:panel',)
+    assert result.unresolved == ()
+
+
+@pytest.mark.parametrize('external', [{}, {'fig:local': 'B.12a', 'sub@fig:local': 'a'}])
+@pytest.mark.parametrize('local_label', ['fig:local', 'sub@fig:local'])
+def test_local_subrefs_remain_for_latex(external, local_label):
+    text = r'\subref{fig:local} \label{' + local_label + '}'
+    result = replace_external_refs(text, external)
+
+    assert result.text == text
+    assert result.replaced == ()
+    assert result.unresolved == ()
+
+
+@pytest.mark.parametrize('external', [{}, {'fig:missing': 'B.12a'}])
+def test_missing_external_panel_labels_are_unresolved(external):
+    text = r'\subref{fig:missing} \subref{fig:missing}'
+    result = replace_external_refs(text, external)
+
+    assert result.text == text
+    assert result.replaced == ()
+    assert result.unresolved == ('fig:missing',)
+    assert replace_external_refs(text, external, track_unresolved=False).unresolved == ()
