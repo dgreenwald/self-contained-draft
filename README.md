@@ -82,8 +82,8 @@ files in the output directory are retained.
 Relative config paths (including CLI overrides) are resolved against the YAML
 file's directory. `output_tex` is a filename within `output_dir`.
 
-Nested `\input{...}` paths are searched relative to the including file, then
-through `search_paths`; extensionless inputs also try `.tex`. Figures and
+Nested `\input{...}` and `\file_get:nnN` paths are searched relative to the
+including file, then through `search_paths`; extensionless reads also try `.tex`. Figures and
 support files are searched relative to the root TeX file's directory, then
 through `search_paths`, even when referenced from an included file. For graphics
 without an extension, the search tries `.pdf`, `.png`, `.jpg`, `.jpeg`, and `.eps`
@@ -93,8 +93,9 @@ in that order within each directory.
 
 - Recursively flattens `\input{...}` files, resolving nested inputs relative to
   the file that includes them.
+- Inlines empty-setup `\file_get:nnN` reads as token-list assignments.
 - Resolves simple macros in path contexts automatically, including paths used by
-  `\input`, `\includegraphics`, `\bibliography`, `\bibliographystyle`,
+  `\input`, `\file_get:nnN`, `\includegraphics`, `\bibliography`, `\bibliographystyle`,
   `\addbibresource`, `\documentclass`, and `\usepackage`.
 - Expands explicitly configured macros from `expand_macros`.
 - Automatically expands helper macros that produce path commands, including
@@ -299,6 +300,35 @@ paths. Missing support files remain unchanged, so installed TeX packages need
 not be present locally. Class/style dependencies are collected recursively as
 described under Local Template Dependencies; conflicting destinations fail
 instead of overwriting one another.
+
+## Token-list File Reads
+
+The builder and standalone flattening utilities inline the empty-setup form
+of `\file_get:nnN`, preserving its assignment semantics. For example, if
+`data/value.dat` contains `0.282`, this call:
+
+```tex
+\file_get:nnN {data/value.dat} {} \l_value_tl
+```
+
+becomes a local assignment equivalent to:
+
+```tex
+\tl_set:Nn \l_value_tl {0.282}
+```
+
+The generated assignment preserves file line endings, including the final TeX
+endline. Later uses of the variable remain TeX commands. Stored contents are not
+executed by the builder: embedded `\input` calls and macro definitions remain
+inside the token list. This is intended for data reads under the same category
+codes as the surrounding source, such as numeric files in `\ExplSyntaxOn`.
+
+The build resolves filename macros and path helpers using active definitions,
+just as for `\input`. Missing files fail unless `allow_missing_inputs: true`,
+which preserves the read. The `strip_comments` option also applies to loaded
+contents. The destination must be a literal control sequence (optionally braced),
+and contents must have balanced braces. Nonempty setup code is rejected; other
+variants such as `\file_get:VnN` and `\file_get:nnNTF` remain unchanged.
 
 ## Parser Scope
 

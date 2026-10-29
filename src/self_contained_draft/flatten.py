@@ -1,4 +1,4 @@
-"""Recursive LaTeX ``\\input`` flattening."""
+"""LaTeX input flattening and expl3 token-list file-read inlining."""
 
 from __future__ import annotations
 
@@ -6,7 +6,16 @@ from dataclasses import dataclass
 from pathlib import Path
 import re
 
-from .latex import append_tex_replacement, LatexParseError, read_required_argument, strip_comments as strip_tex_comments
+from .latex import (
+    append_tex_replacement,
+    iter_control_sequences,
+    LatexParseError,
+    mask_comments,
+    read_balanced,
+    read_control_sequence_argument,
+    read_required_argument,
+    strip_comments as strip_tex_comments,
+)
 from .macros import parse_macro_definitions
 
 
@@ -34,6 +43,95 @@ class InputCommand:
 
 
 INPUT_PATTERN = re.compile(r"\\input\b")
+FILE_GET_PATTERN = re.compile(r"\\file_get:nnN(?![A-Za-z@_:])")
+FILE_COMMAND_PATTERN = re.compile(r"\\(?:input\b|file_get:nnN(?![A-Za-z@_:]))")
+
+
+@dataclass(frozen=True)
+class FileGetCommand:
+    """A file read whose contents are assigned to an expl3 token list."""
+
+    start: int
+    end: int
+    path_text: str
+    setup: str
+    variable: str
+
+
+def parse_file_get_command(
+    text: str, start: int, *, source: str | None = None,
+) -> FileGetCommand:
+    """Read the two braced arguments and control sequence of file_get:nnN."""
+
+    match = FILE_GET_PATTERN.match(text, start)
+    if match is None:
+        raise LatexParseError("Expected \\file_get:nnN", source=source,
+                              position=start, text=text)
+    masked = mask_comments(text) if "%" in text else text
+    filename = read_required_argument(masked, start=match.end(), source=source)
+    setup = read_required_argument(masked, start=filename.end, source=source)
+    cursor = _skip_whitespace(masked, setup.end)
+    if masked[cursor:cursor + 1] == "{":
+        operand = read_required_argument(masked, start=cursor, source=source)
+        variable = read_control_sequence_argument(operand.content, source=source, expl3=True)
+        if operand.content[variable.end:].strip():
+            raise LatexParseError("Expected a single token-list variable", source=source,
+                                  position=cursor, text=text)
+        end = operand.end
+    else:
+        variable = read_control_sequence_argument(masked, start=cursor, source=source, expl3=True)
+        end = variable.end
+    return FileGetCommand(
+        start, end,
+        strip_tex_comments(text[filename.start + 1:filename.end - 1]).strip(),
+        strip_tex_comments(text[setup.start + 1:setup.end - 1]),
+        "\\" + variable.name,
+    )
+
+
+def inline_file_get(
+    command: FileGetCommand,
+    *,
+    source_path: Path,
+    search_paths: tuple[Path, ...] = (),
+    strip_comments: bool = True,
+    allow_missing_inputs: bool = False,
+) -> str:
+    """Replace an empty-setup file read with a local token-list assignment.
+
+    File contents are stored, not executed: do not flatten inputs or apply
+    macro definitions encountered inside the loaded token list.
+    """
+
+    if command.setup.strip():
+        raise FlattenError(f"Nonempty \\file_get:nnN setup is unsupported in {source_path}")
+    input_path = resolve_input_path(
+        command.path_text, current_dir=source_path.parent, search_paths=search_paths,
+    )
+    if input_path is None:
+        if allow_missing_inputs:
+            return rf"\file_get:nnN{{{command.path_text}}}{{}}{{{command.variable}}}"
+        raise FlattenError(
+            f"Could not resolve \\file_get:nnN{{{command.path_text}}} from {source_path}"
+        )
+    try:
+        content = input_path.read_text()
+    except OSError as exc:
+        raise FlattenError(f"Could not read input file {input_path}: {exc}") from exc
+    # TeX adds an endline to the last physical line, even without a final LF.
+    # This also prevents an EOF comment from swallowing the enclosing brace.
+    if content and not content.endswith("\n"):
+        content += "\n"
+    if strip_comments:
+        content = strip_tex_comments(content)
+    wrapped = "{" + mask_comments(content) + "}"
+    try:
+        argument = read_balanced(wrapped, source=str(input_path))
+        if argument.end != len(wrapped):
+            raise LatexParseError("Unbalanced file contents", source=str(input_path))
+    except LatexParseError as exc:
+        raise FlattenError(f"Cannot inline unbalanced file contents from {input_path}") from exc
+    return rf"\tl_set:Nn {command.variable}" + "{" + content + "}"
 
 
 def flatten_file(
@@ -43,7 +141,7 @@ def flatten_file(
     strip_comments: bool = True,
     allow_missing_inputs: bool = False,
 ) -> str:
-    """Flatten a LaTeX root file by recursively inlining ``\\input`` files."""
+    """Flatten input files and inline empty-setup ``\\file_get:nnN`` reads."""
 
     root = Path(path).expanduser().resolve()
     options = FlattenOptions(
@@ -62,7 +160,7 @@ def flatten_text(
     strip_comments: bool = True,
     allow_missing_inputs: bool = False,
 ) -> str:
-    """Flatten ``\\input`` commands in text using ``source_path`` as context."""
+    """Flatten file reads in text using ``source_path`` as context."""
 
     source = Path(source_path).expanduser().resolve()
     options = FlattenOptions(
@@ -176,8 +274,27 @@ def _flatten_text(
     )
     output: list[str] = []
     cursor = 0
-    for match in INPUT_PATTERN.finditer(text):
+    for token in iter_control_sequences(text):
+        if token.start < cursor:
+            continue
+        match = FILE_COMMAND_PATTERN.match(text, token.start)
+        if match is None:
+            continue
         if _inside_spans(match.start(), definition_spans):
+            continue
+        if FILE_GET_PATTERN.match(text, match.start()) is not None:
+            command = parse_file_get_command(text, match.start(), source=str(source_path))
+            output.append(text[cursor:command.start])
+            append_tex_replacement(
+                output,
+                inline_file_get(
+                    command, source_path=source_path, search_paths=options.search_paths,
+                    strip_comments=options.strip_comments,
+                    allow_missing_inputs=options.allow_missing_inputs,
+                ),
+                following=text[command.end:],
+            )
+            cursor = command.end
             continue
         command = parse_input_command(text, match.start(), source=str(source_path))
         output.append(text[cursor : command.start])

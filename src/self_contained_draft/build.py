@@ -10,6 +10,7 @@ import yaml
 
 from .conditionals import ConditionalError, validate_flags
 from .figures import FigureAsset, rewrite_figures
+from .flatten import FlattenError
 from .latex import LatexParseError
 from .processor import process_file
 from .properties import PropertyInlineError, inline_property_macros
@@ -133,7 +134,7 @@ def build_draft(config: BuildConfig) -> BuildResult:
             explicit_macros=config.expand_macros,
             conditional_flags=config.conditional_flags,
         )
-    except ConditionalError as exc:
+    except (ConditionalError, FlattenError) as exc:
         raise BuildError(str(exc)) from exc
 
     replaced_refs: tuple[str, ...] = ()

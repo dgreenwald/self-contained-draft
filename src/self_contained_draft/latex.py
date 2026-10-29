@@ -237,6 +237,20 @@ def mask_comments(text: str) -> str:
     return "".join(output)
 
 
+def read_control_sequence_argument(
+    text: str, *, start: int = 0, source: str | None = None, expl3: bool = False,
+) -> ControlSequence:
+    """Read a control sequence operand, optionally allowing expl3 names."""
+
+    start = _skip_whitespace(text, start)
+    pattern = r"\\([A-Za-z@_:]+|[^\s])" if expl3 else r"\\([A-Za-z@]+|[^\s])"
+    match = re.compile(pattern).match(text, start)
+    if match is None:
+        raise LatexParseError("Expected control sequence", source=source,
+                              position=start, text=text)
+    return ControlSequence(match.group(1), start, match.end())
+
+
 def read_balanced(
     text: str,
     *,

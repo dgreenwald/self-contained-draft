@@ -76,6 +76,11 @@ across many directories.
 ## LaTeX Parsing Rules
 - Keep parsing conservative. This is not a complete TeX parser.
 - Use balanced-brace helpers from `latex.py` for command arguments.
+- Empty-setup `\file_get:nnN` reads are inlined as local `\tl_set:Nn`
+  assignments in both the build processor and standalone flattener. Loaded
+  contents are stored without processing embedded commands or updating active
+  definitions. Preserve the final TeX endline and keep comments from consuming
+  assignment delimiters. Nonempty setup and unbalanced contents are errors.
 - `\newcommand`/`\renewcommand` expansion supports `[nargs][default]`, including
   starred forms. The optional first argument counts toward `nargs`; omitted
   options use the default and explicit `[]` supplies an empty value. Keep both

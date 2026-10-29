@@ -8,7 +8,9 @@ from pathlib import Path
 import re
 
 from .conditionals import ConditionalSimplifier, validate_flags
-from .flatten import FlattenError, resolve_input_path
+from .flatten import (
+    FlattenError, inline_file_get, parse_file_get_command, resolve_input_path,
+)
 from .latex import (
     LatexParseError,
     append_tex_replacement,
@@ -38,7 +40,7 @@ class ProcessOptions:
 
 
 COMMAND_PATTERN = re.compile(
-    r"\\(?:(?:IfFileExists|input|includegraphics|bibliographystyle|bibliography|"
+    r"\\(?:file_get:nnN(?![A-Za-z@_:])|(?:IfFileExists|input|includegraphics|bibliographystyle|bibliography|"
     r"addbibresource|documentclass|usepackage|(?:re)?newcommand\*?|def)(?![A-Za-z@])|"
     r"[A-Za-z@]+)"
 )
@@ -53,6 +55,7 @@ PATH_COMMAND_TOKENS = tuple(
     rf"\{name}"
     for name in (
         "input",
+        "file_get:nnN",
         "includegraphics",
         "bibliography",
         "bibliographystyle",
@@ -156,19 +159,16 @@ def _process_text(
 
     output: list[str] = []
     cursor = 0
-    tokens = iter(iter_control_sequences(text)) if options.conditionals is not None else None
+    tokens = iter(iter_control_sequences(text))
     while cursor < len(text):
-        if tokens is not None:
+        token = next(tokens, None)
+        while token is not None and token.start < cursor:
             token = next(tokens, None)
-            while token is not None and token.start < cursor:
-                token = next(tokens, None)
-            match = COMMAND_PATTERN.match(text, token.start) if token is not None else None
-            if token is not None and match is None:
-                output.append(text[cursor:token.end])
-                cursor = token.end
-                continue
-        else:
-            match = COMMAND_PATTERN.search(text, cursor)
+        match = COMMAND_PATTERN.match(text, token.start) if token is not None else None
+        if token is not None and match is None:
+            output.append(text[cursor:token.end])
+            cursor = token.end
+            continue
         if match is None:
             output.append(text[cursor:])
             break
@@ -238,6 +238,21 @@ def _process_text(
             )
             append_tex_replacement(output, replacement, following=text[end:])
             cursor = end
+            continue
+
+        if name == "file_get:nnN":
+            file_get = parse_file_get_command(text, match.start(), source=str(source_path))
+            path_text = expand_path_text(
+                _simplify_fragment(file_get.path_text, options.conditionals, source=str(source_path)),
+                env,
+            )
+            replacement = inline_file_get(
+                replace(file_get, path_text=path_text), source_path=source_path,
+                search_paths=options.search_paths, strip_comments=options.strip_comments,
+                allow_missing_inputs=options.allow_missing_inputs,
+            )
+            append_tex_replacement(output, replacement, following=text[file_get.end:])
+            cursor = file_get.end
             continue
 
         if name == "input":
